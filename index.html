@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>小 Clawd 的 Java 大陆</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 8'%3E%3Cpath fill='%23d97757' d='M2 0h7v2h2v2H9v2H2V4H0V2h2z'/%3E%3Cpath fill='%23141826' d='M3 2h1v2H3zM7 2h1v2H7z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Press+Start+2P&display=swap">
+<style>
+/* 布局：顶部状态栏（血量、形态）→ 立体大陆地图（画布，弯曲小路）→ 模糊转场 → 战斗画面；单一深色街机风，刻意不做浅色主题 */
+:root{
+  --night:#141826; --panel:#1f2538; --line:#39415e; --ink:#eef0f7; --dim:#9aa3c2;
+  --clawd:#d97757; --hp:#e5484d; --heal:#46c37b; --gold:#f2c14e;
+  --pix:"DotGothic16","Microsoft YaHei",monospace; --num:"Press Start 2P","DotGothic16",monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--night);color:var(--ink)}
+body{font-family:var(--pix);font-size:15px;line-height:1.6;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 40px}
+.wrap{margin:0 auto;display:flex;flex-direction:column;gap:12px}
+/* 游戏 HUD：贴在地图顶部，滚动时一直可见 */
+.hud{position:absolute;top:8px;left:8px;z-index:5;width:min(300px,calc(100% - 16px))}
+.hudcard{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 8px;align-items:center;
+  padding:6px 8px;background:rgba(20,24,38,.82);border:3px solid var(--ink);box-shadow:0 0 0 2px #000,3px 3px 0 2px rgba(0,0,0,.4)}
+#face{width:36px;height:36px;background:#2b3557;border:2px solid var(--line)}
+.hudmain{min-width:0;display:flex;flex-direction:column;gap:2px}
+.hudtop{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+h1{font-family:var(--pix);font-size:14px;margin:0;line-height:1.2}
+h1 b{color:var(--clawd)} h1 span{color:var(--gold)}
+.lvl{font-family:var(--num);font-size:10px;color:var(--gold)}
+.hprow{display:flex;align-items:center;gap:6px}
+.heart{width:14px;height:12px;flex:none;background:var(--hp);clip-path:polygon(0 25%,25% 0,50% 25%,75% 0,100% 25%,100% 50%,50% 100%,0 50%)}
+.hpbar{flex:1;height:12px;border:2px solid var(--ink);background:#2a1418;position:relative}
+.hpbar i{position:absolute;inset:0 auto 0 0;background:var(--hp);transition:width .6s steps(12)}
+.hpbar i.ok{background:var(--heal)}
+.hpbar::after{content:"";position:absolute;inset:0 0 50% 0;background:rgba(255,255,255,.18)}
+.v{font-family:var(--num);font-size:9px;color:var(--ink);flex:none}
+.chips{display:flex;flex-wrap:wrap;gap:0 8px;font-size:11px;color:var(--dim);grid-column:1/-1}
+.chip b{font-family:var(--num);font-size:9px;color:var(--ink)}
+.chip.g{color:var(--heal)} .chip.y{color:var(--gold)}
+button.chip{font:inherit;font-size:11px;background:none;border:0;box-shadow:none;padding:0;color:var(--gold);cursor:pointer;text-decoration:underline dotted}
+button.icon{font-size:16px;line-height:1;padding:2px 7px;align-self:start;box-shadow:2px 2px 0 #000}
+.toast{grid-column:1/-1;font-size:11px;color:var(--dim);border-top:2px dashed var(--line);padding-top:2px}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;height:100%}
+/* 连接设置弹窗 */
+.setup{position:absolute;inset:0;margin:auto;z-index:20;width:min(460px,calc(100% - 32px));height:fit-content;display:flex;flex-direction:column;gap:10px;
+  padding:16px;background:rgba(20,24,38,.95);border:3px solid var(--ink);box-shadow:0 0 0 3px #000,6px 6px 0 3px rgba(0,0,0,.5)}
+.setup h2{margin:0;font-size:18px;color:var(--gold)} .setup p{margin:0;font-size:13px;color:var(--dim)}
+.setup input{font:inherit;font-size:13px;padding:8px;background:#0e1322;color:var(--ink);border:2px solid var(--line);width:100%}
+.setup input:focus{outline:2px solid var(--gold)}
+/* 升级特效层 */
+#fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
+.toast.err{color:#ff9aa0}
+button{font-family:var(--pix);font-size:14px;background:var(--clawd);color:#1b0f0a;border:3px solid var(--ink);padding:6px 12px;cursor:pointer;box-shadow:3px 3px 0 #000}
+button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 #000}
+button.ghost{background:transparent;color:var(--ink)}
+button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.stage{position:relative;border:3px solid var(--line);background:#0b2238;overflow:hidden;height:94vh;height:94dvh}
+.scroller{position:absolute;inset:0;overflow-x:hidden;overflow-y:auto}
+/* 右下角图例，和 HUD 同一套像素面板样式 */
+.legend{position:absolute;right:8px;bottom:8px;z-index:5;max-width:min(320px,calc(100% - 16px));display:flex;flex-direction:column;align-items:flex-end;gap:4px;
+  padding:6px 8px;background:rgba(20,24,38,.82);border:3px solid var(--ink);box-shadow:0 0 0 2px #000;font-size:11px;color:var(--dim)}
+.lg-flags{display:flex;flex-wrap:wrap;gap:2px 10px;justify-content:flex-end}
+.lg-flags i{display:inline-block;width:10px;height:8px;margin-right:4px;border:1px solid #000;vertical-align:middle}
+.legend .log{max-height:40vh;overflow:auto;align-self:stretch;border-top:2px dashed var(--line);padding-top:4px;font-size:12px}
+.battle:not([hidden]) ~ .legend, .stage.fighting .legend{display:none}
+canvas{display:block;image-rendering:pixelated;max-width:100%}
+#map{width:100%;max-width:min(100%,960px);margin:0 auto;height:auto;cursor:pointer;transition:filter .9s ease,opacity .9s ease,transform .9s ease}
+#map.blur{filter:blur(14px) brightness(.6);transform:scale(1.06);opacity:.4}
+.note{font-size:13px;color:var(--dim);margin:0}
+.status{padding:10px 14px;border:3px dashed var(--line);font-size:14px}
+.status.err{border-color:var(--hp)}
+/* 战斗：画面铺满游戏区，关卡信息是底部的 RPG 对话框 */
+.battle{position:relative;height:100%;background:#1b2442;transition:filter .7s ease,opacity .7s ease}
+.battle.enter{filter:blur(14px);opacity:0}
+.battle canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:cover;object-position:center 30%}
+@media (max-aspect-ratio:1/1){.battle canvas{object-fit:contain;object-position:center top}}
+.side{position:absolute;left:max(12px,2%);right:max(12px,2%);bottom:12px;max-height:34%;overflow:auto;
+  padding:10px 14px;display:flex;flex-direction:column;gap:6px;min-width:0;
+  background:rgba(20,24,38,.88);border:3px solid var(--ink);box-shadow:0 0 0 3px #000}
+.side .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.side h2{margin:0;font-size:17px;text-wrap:balance}
+.side .btns{margin-left:auto;display:flex;gap:8px}
+.tag{display:inline-block;font-size:12px;padding:1px 8px;border:2px solid currentColor}
+.tag.cleared{color:var(--heal)} .tag.shaky{color:var(--gold)} .tag.todo{color:var(--dim)}
+.ev{font-size:13px;color:var(--dim);max-height:9.5em;overflow:auto;margin:0}
+.log{font-size:13px;margin:0;padding-left:1.2em;color:var(--dim)}
+.log li b{color:var(--ink)}
+.dmg{color:var(--hp)} .hl{color:var(--heal)}
+details summary{cursor:pointer;color:var(--ink)}
+@media (max-width:640px){.battle{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.hpbar i,#map,.battle{transition:none}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="stage" id="stage">
+    <section class="hud" aria-label="小 Clawd 状态"><div class="hudcard">
+      <canvas id="face" width="48" height="48" aria-hidden="true"></canvas>
+      <div class="hudmain">
+        <div class="hudtop">
+          <h1>小 <b>Clawd</b> · <span id="formName">见习</span></h1>
+          <span class="lvl">Lv.<span id="lvl">0</span></span>
+        </div>
+        <div class="hprow">
+          <span class="heart" aria-hidden="true"></span>
+          <div class="hpbar"><i id="hpi" style="width:0%"></i></div>
+          <span class="v" id="hpv">--/100</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;align-self:start">
+        <button class="ghost icon" id="refresh" type="button" title="刷新学习卡" aria-label="刷新学习卡">↻</button>
+        <button class="ghost icon" id="settings" type="button" title="连接设置" aria-label="连接设置">⚙</button>
+      </div>
+      <div class="chips">
+        <span class="chip g">✔ <b id="sCleared">-</b> 已通</span>
+        <span class="chip y">? <b id="sShaky">-</b> 待复测</span>
+        <button class="chip" id="formNext" type="button" title="回放升级特效"></button>
+      </div>
+      <div class="toast" id="status">正在连接 Google Drive，读取学习状态卡…</div>
+    </div></section>
+    <aside class="legend" aria-label="图例">
+      <div class="lg-flags">
+        <span><i style="background:#46c37b"></i>已通关</span>
+        <span><i style="background:#f2c14e"></i>待复测</span>
+        <span><i style="background:#7fb0e0"></i>没记录</span>
+        <span><i style="background:#8a92b0"></i>未开打</span>
+      </div>
+      <button class="chip" id="rulesBtn" type="button" aria-expanded="false">? 血量规则</button>
+      <ul class="log" id="hpLog" hidden></ul>
+    </aside>
+    <div class="scroller" id="scroller">
+    <canvas id="map" width="480" height="900" aria-label="关卡地图，第 1 关在最下面"></canvas>
+    <section class="battle" id="battle" hidden>
+      <canvas id="arena" width="320" height="180" aria-label="战斗画面"></canvas>
+      <div class="side">
+        <div class="row">
+          <span class="tag" id="bTag"></span>
+          <h2 id="bName"></h2>
+          <div class="btns">
+            <button id="fight" type="button">出击！</button>
+            <button class="ghost" id="back" type="button">回地图</button>
+          </div>
+        </div>
+        <div id="bInfo" class="note"></div>
+        <details><summary>老师写下的证据</summary><p class="ev" id="bEv"></p></details>
+      </div>
+    </section>
+    </div>
+  </div>
+  <canvas id="fx" hidden aria-label="升级特效，点击关闭"></canvas>
+</div>
+
+<script>
+
+// 全部关卡，按 05 课程地图的顺序。m = 在学习卡「知识点｜名称」里找哪一行；
+// zone = 所在区域；past = 这个模块已经学过（卡里没记录也不算“未开打”）
+const CURRICULUM = [
+  // 新手草原：SE-01 至 SE-04 基础语法
+  {n:"JDK 与第一个程序", mod:"SE-01", zone:0, m:/基础语法/, past:1},
+  {n:"变量与数据类型", mod:"SE-01", zone:0, m:/基础语法/, past:1},
+  {n:"类型转换", mod:"SE-02", zone:0, m:/基础语法/, past:1},
+  {n:"运算符", mod:"SE-02", zone:0, m:/基础语法/, past:1},
+  {n:"输入输出 Scanner", mod:"SE-02", zone:0, m:/基础语法/, past:1},
+  {n:"if 分支", mod:"SE-03", zone:0, m:/^if 判断/, past:1},
+  {n:"switch", mod:"SE-03", zone:0, m:/基础语法/, past:1},
+  {n:"for 循环", mod:"SE-03", zone:0, m:/基础语法/, past:1},
+  {n:"while / do-while", mod:"SE-03", zone:0, m:/基础语法/, past:1},
+  {n:"break 与 continue", mod:"SE-03", zone:0, m:/基础语法/, past:1},
+  {n:"嵌套循环", mod:"SE-03", zone:0, m:/^嵌套循环/, past:1},
+  {n:"一维数组", mod:"SE-04", zone:0, m:/^数组创建和遍历/, past:1},
+  {n:"二维数组", mod:"SE-04", zone:0, m:/^二维数组/, past:1},
+  {n:"方法参数与返回值", mod:"SE-02", zone:0, m:/^方法的参数和返回值/, past:1},
+  {n:"方法重载", mod:"SE-02", zone:0, m:/基础语法/, past:1},
+  // 秋枫山谷：SE-05 至 SE-07 面向对象
+  {n:"类与对象", mod:"SE-05", zone:1, m:/^类与对象/, past:1},
+  {n:"构造器与 this", mod:"SE-05", zone:1, m:/^类与对象/, past:1},
+  {n:"封装", mod:"SE-05", zone:1, m:/^封装/, past:1},
+  {n:"static", mod:"SE-05", zone:1, m:/^static/, past:1},
+  {n:"继承", mod:"SE-06", zone:1, m:/^继承/, past:1},
+  {n:"重写与 super", mod:"SE-06", zone:1, m:/^继承/, past:1},
+  {n:"多态", mod:"SE-06", zone:1, m:/^多态/, past:1},
+  {n:"final 与单例", mod:"SE-07", zone:1, m:/^final/, past:1},
+  {n:"枚举", mod:"SE-07", zone:1, m:/^枚举/, past:1},
+  {n:"抽象类", mod:"SE-07", zone:1, m:/^抽象类/, past:1},
+  {n:"接口", mod:"SE-07", zone:1, m:/^接口/, past:1},
+  {n:"try-catch-finally", mod:"SE-07", zone:1, m:/^try-catch/, past:1},
+  {n:"智能家居综合项目", mod:"SE-07", zone:1, m:null, past:1, special:"project"},
+  // 雪原高地：SE-08 高级语法、String、ArrayList，加上本周的实战任务
+  {n:"代码块", mod:"SE-08", zone:2, m:/^代码块/, past:1},
+  {n:"成员与静态内部类", mod:"SE-08", zone:2, m:/^内部类/, past:1},
+  {n:"匿名内部类", mod:"SE-08", zone:2, m:/^匿名内部类/, past:1},
+  {n:"Lambda", mod:"SE-08", zone:2, m:/^Lambda/, past:1},
+  {n:"方法引用", mod:"SE-08", zone:2, m:/^方法引用/, past:1},
+  {n:"String 基础", mod:"SE-08", zone:2, m:/^String 基础/, past:1},
+  {n:"String 输入校验", mod:"SE-08", zone:2, m:/^String 输入校验/},
+  {n:"ArrayList 增删查", mod:"SE-08", zone:2, m:/^ArrayList 基础/, past:1},
+  {n:"ArrayList 存取对象", mod:"SE-08", zone:2, m:/^ArrayList 存对象/, past:1},
+  {n:"ArrayList 复习小测", mod:"SE-08", zone:2, m:null, special:"arraylist"},
+  {n:"算法：数组＋循环 第 1 题", mod:"算法", zone:2, m:null, special:"algo1"},
+  {n:"算法：数组＋循环 第 2 题", mod:"算法", zone:2, m:null, special:"algo2"},
+  {n:"Git 独立提交", mod:"Git", zone:2, m:null, special:"git"},
+  // 熔岩王城：SE-11 至 SE-16 Java 进阶
+  {n:"异常体系", mod:"SE-11", zone:3, m:/^异常/},
+  {n:"泛型", mod:"SE-11", zone:3, m:/^泛型/},
+  {n:"包装类", mod:"SE-11", zone:3, m:/^包装类/},
+  {n:"Collection 与 List", mod:"SE-11", zone:3, m:/^(Collection|List)/},
+  {n:"LinkedList 原理", mod:"SE-11", zone:3, m:/^LinkedList/},
+  {n:"Set 去重", mod:"SE-12", zone:3, m:/^Set/},
+  {n:"Map 键值对", mod:"SE-12", zone:3, m:/^(Map|HashMap)/},
+  {n:"Stream 流", mod:"SE-12", zone:3, m:/^Stream/},
+  {n:"File 与递归", mod:"SE-13", zone:3, m:/^File/},
+  {n:"IO 流", mod:"SE-13", zone:3, m:/^IO/},
+  {n:"线程与线程安全", mod:"SE-14", zone:3, m:/^线程/},
+  {n:"锁与线程池", mod:"SE-14", zone:3, m:/^(锁|线程池)/},
+  {n:"网络 TCP/UDP", mod:"SE-15", zone:3, m:/^(网络|TCP|UDP)/},
+  {n:"单元测试", mod:"SE-16", zone:3, m:/^单元测试/},
+  {n:"反射与注解", mod:"SE-16", zone:3, m:/^(反射|注解)/},
+  {n:"动态代理", mod:"SE-16", zone:3, m:/^动态代理/}
+];
+
+// 形态：通关数达到 min 就进化
+const FORMS = [
+  {min:0, name:"见习"},{min:3, name:"战士"},{min:6, name:"剑士"},{min:10, name:"骑士"},{min:15, name:"王者"}
+];
+const tierOf = n => FORMS.reduce((t,f,i)=>n>=f.min?i:t,0);
+
+// ---------- 读学习卡 ----------
+function parseCard(text){
+  const lines = text.split("\n").map(s=>s.trim()).filter(Boolean);
+  // 1) 读出学习卡里的每一行知识点
+  const card = [];
+  for(const l of lines){
+    if(!l.startsWith("知识点｜")) continue;
+    const p = l.split("｜");
+    const lv = p[2]||"";
+    const ev = p.slice(3).join("｜").replace(/^证据：/,"");
+    card.push({ key:p[1], lv:lv.replace(/^状态：/,""), ev, used:false,
+      status: /Level\s*[345]/.test(lv) ? "cleared" : "shaky" });
+  }
+  const pack = (c, name, mod, zone, extra={}) => ({
+    name, full:`${name}（${mod}）`, mod, zone, lv:c?c.lv:"未开打", ev:c?c.ev:"", status:c?c.status:"todo",
+    hints:c?(c.ev.match(/经(一次|两次)?提示|经指出|经纠正/g)||[]).length:0,
+    wins:c?(c.ev.match(/独立|全对|一次写对|与预期一致/g)||[]).length:0, ...extra });
+  // 2) 按课程地图排关卡，每关去学习卡里找对应的行
+  const solved = +((text.match(/算法（力扣 Hot 100）：已完成\s*(\d+)/)||[])[1]||0);
+  const ordered = CURRICULUM.map(s=>{
+    if(s.special){
+      const done = {
+        project: /SE-07 综合项目核心练习已验收/.test(text) ? "shaky" : null,
+        arraylist: /ArrayList[^。\n；]{0,8}(小测通过|复习完成|已完成)/.test(text) ? "cleared" : null,
+        algo1: solved>=1 ? "cleared" : null,
+        algo2: solved>=2 ? "cleared" : null,
+        git: /Git[^。\n]{0,12}独立提交[^。\n]{0,12}(通过|已完成)/.test(text) ? "cleared" : null
+      }[s.special];
+      const lv = s.special==="project" ? "核心练习已验收，整体项目暂不认定为 Level 3" : done ? "已完成" : "未开打";
+      return pack(done?{lv, ev:"", status:done}:null, s.n, s.mod, s.zone, done?{}:{lv});
+    }
+    const c = card.find(x=>s.m.test(x.key));
+    if(c){ c.used = true; return pack(c, s.n, s.mod, s.zone) }
+    return pack(null, s.n, s.mod, s.zone, s.past ? {status:"unrec", lv:"学习卡里没有记录"} : {});
+  });
+  // 3) 学习卡里有、课程地图里没列的知识点，插到第一个未开打的关卡前面
+  const firstTodo = ordered.findIndex(s=>s.status==="todo");
+  const extras = card.filter(c=>!c.used).map(c=>pack(c, c.key.replace(/（.*$/,""), "学习卡", ordered[Math.max(0,firstTodo-1)].zone));
+  ordered.splice(firstTodo<0?ordered.length:firstTodo, 0, ...extras);
+  const stages = card;
+  const douSeg = (text.match(/已知抖点：([^\n]*)/)||[])[1]||"";
+  const dou = douSeg.split("；").filter(Boolean).map(t=>{
+    const [k,v] = t.includes("：") ? t.split(/：(.*)/s) : ["其他",t];
+    return {topic:k.trim(), n: v ? v.split(/，|、/).filter(Boolean).length : 1};
+  });
+  const reviewSeg = (text.match(/抽点记录：([^｜]*)/)||[])[1]||"";
+  const reviews = (reviewSeg.match(/闭卷复习/g)||[]).length;
+  const allRight = stages.reduce((a,s)=>a+(s.ev.match(/全对/g)||[]).length,0);
+  const wd = ["周日","周一","周二","周三","周四","周五","周六"][new Date().getDay()];
+  const today = (text.match(new RegExp("计划·"+wd+"：([^\\n]*)"))||[])[1]||"";
+  const updated = (text.match(/最后更新：([0-9-]+)/)||[])[1]||"";
+  return {stages:ordered, dou, reviews, allRight, today, wd, updated};
+}
+
+// 血量规则：从 100 起，每个抖点 -5，每次闭卷复习 +10，每次短测全对 +5
+function computeHp(d){
+  const douN = d.dou.reduce((a,x)=>a+x.n,0);
+  return {hp:Math.max(0, Math.min(100, 100 - douN*5 + d.reviews*10 + d.allRight*5)), douN};
+}
+
+// ---------- 噪声 ----------
+function hash(x,y){ const s=Math.sin(x*127.1+y*311.7)*43758.5453; return s-Math.floor(s) }
+function noise(x,y){
+  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+  const a=hash(xi,yi), b=hash(xi+1,yi), c=hash(xi,yi+1), d=hash(xi+1,yi+1);
+  return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v;
+}
+const fbm = (x,y)=>noise(x,y)*.6+noise(x*2.1,y*2.1)*.3+noise(x*4.3,y*4.3)*.1;
+
+// ---------- 小 Clawd（按形态加装备）----------
+const BODY = [
+  "..XXXXXXX..",
+  "..XXXXXXX..",
+  "XXXEXXXEXXX",
+  "XXXEXXXEXXX",
+  "..XXXXXXX..",
+  "..XXXXXXX..",
+  "..X.X.X.X..",
+  "..X.X.X.X.."];
+function px(ctx,x,y,s,i,j,c){ ctx.fillStyle=c; ctx.fillRect(x+i*s,y+j*s,s,s) }
+function drawClawd(ctx,x,y,s,tier,t=0,legPhase=0){
+  // 影子
+  ctx.fillStyle="rgba(0,0,0,.35)";
+  ctx.beginPath(); ctx.ellipse(x+5.5*s,y+8.3*s,5*s,1.3*s,0,0,7); ctx.fill();
+  if(tier>=4){ // 王者光环
+    const g=ctx.createRadialGradient(x+5.5*s,y+3*s,s,x+5.5*s,y+3*s,9*s);
+    g.addColorStop(0,`rgba(242,193,78,${.35+.15*Math.sin(t/6)})`); g.addColorStop(1,"rgba(242,193,78,0)");
+    ctx.fillStyle=g; ctx.fillRect(x-4*s,y-6*s,19*s,17*s);
+  }
+  if(tier>=3){ for(let j=1;j<8;j++) for(let i=1;i<10;i++) px(ctx,x-s,y,s,i,j+ (j>5?0:0), j>5?"#2f4ab8":"#3b5bdb") } // 披风
+  BODY.forEach((row,j)=>[...row].forEach((c,i)=>{
+    if(c===".") return;
+    if(j>=6 && legPhase && (i===2||i===6) && j===7) return; // 走路时抬腿
+    if(j>=6 && legPhase && (i===4||i===8) && j===7 && legPhase<0) return;
+    px(ctx,x,y,s,i,j,c==="E"?"#141826":(j>=6?"#c4664a":"#d97757"));
+  }));
+  // 高光，让它更立体
+  for(let i=2;i<9;i++) px(ctx,x,y,s,i,0,"#e8957a");
+  if(tier>=1 && tier<3){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,1,"#e5484d"); px(ctx,x,y,s,9,1,"#e5484d"); px(ctx,x,y,s,10,2,"#e5484d") } // 头巾
+  if(tier===3){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,-1,"#b8c0d8"); for(let i=4;i<7;i++) px(ctx,x,y,s,i,-2,"#dfe4f2"); px(ctx,x,y,s,5,-3,"#e5484d") } // 头盔
+  if(tier>=4){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,-1,"#f2c14e"); [2,4,6,8].forEach(i=>px(ctx,x,y,s,i,-2,"#f2c14e")); px(ctx,x,y,s,5,-1,"#e5484d") } // 王冠
+  if(tier>=2){ // 剑
+    for(let j=-3;j<4;j++) px(ctx,x,y,s,11,j,tier>=4?"#ffe9a8":"#dfe6f5");
+    px(ctx,x,y,s,10,4,"#f2c14e"); px(ctx,x,y,s,11,4,"#f2c14e"); px(ctx,x,y,s,12,4,"#f2c14e"); px(ctx,x,y,s,11,5,"#7a4b2a");
+  }
+}
+
+// ---------- 地图 ----------
+const map = document.getElementById("map"), mx = map.getContext("2d");
+const W = map.width, T = 8;
+let data = null, pos = 0, walking = false, frame = 0, clawdXY = null, legPhase = 0;
+let nodes = [], curves = [], terrain = null, tier = 0;
+try{ pos = +localStorage.getItem("clawd-pos")||0 }catch(e){}
+
+function layout(n){
+  // Saga 地图：第 1 关在最下面，一条路左右摆动着往上走
+  const H = 160 + (n-1)*STEP + 200;
+  nodes = [];
+  for(let i=0;i<n;i++){
+    const x = W/2 + Math.sin(i*.85)*120 + (hash(i,7)-.5)*50;
+    nodes.push([x, H-150-i*STEP+(hash(i,3)-.5)*24]);
+  }
+  // Catmull-Rom 曲线，并加一点横向弯折
+  curves = [];
+  for(let i=0;i<n-1;i++){
+    const p0=nodes[Math.max(0,i-1)], p1=nodes[i], p2=nodes[i+1], p3=nodes[Math.min(n-1,i+2)];
+    const pts=[], wig=(hash(i,11)-.5)*30;
+    for(let k=0;k<=30;k++){
+      const t=k/30, t2=t*t, t3=t2*t;
+      let x=.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
+      let y=.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
+      const dx=p2[0]-p1[0], dy=p2[1]-p1[1], L=Math.hypot(dx,dy)||1, b=Math.sin(t*Math.PI*2)*wig;
+      pts.push([x-dy/L*b, y+dx/L*b]);
+    }
+    curves.push(pts);
+  }
+  return H;
+}
+
+// 区域按课程模块划分，风景跟着换
+const STEP = 104;
+const ZONES = [
+  {name:"新手草原 · 基础语法", g:["#4b9147","#58a352","#6fb35d","#a7c57a"], sand:"#d9c38f", tree:["#2f6b3c","#3f8a4d"]},
+  {name:"秋枫山谷 · 面向对象", g:["#9a6a2f","#b47a35","#c98f3e","#e0b25c"], sand:"#d8b98a", tree:["#a33d2a","#d0582f"]},
+  {name:"雪原高地 · 高级语法", g:["#b9c6d8","#cdd7e6","#dde5f0","#f2f5fa"], sand:"#a9b6c8", tree:["#2c5a4a","#3d7563"]},
+  {name:"熔岩王城 · Java 进阶", g:["#4a3438","#5c3e40","#6e4a48","#8a5a52"], sand:"#7a4030", tree:["#3a2a2a","#5a3a32"]}
+];
+// 区域交界：每个区域从“上一区最后一关和本区第一关的中间”开始；
+// 交界附近用噪声抖动边界，两种地貌像素交错，形成融合渐变
+let zoneStarts = [];   // 每个区域第一关的序号
+function computeZoneStarts(){
+  zoneStarts = [];
+  const st = data ? data.stages : [];
+  st.forEach((s,i)=>{ if(i===0 || s.zone!==st[i-1].zone) zoneStarts.push({zone:s.zone, i}) });
+  if(!zoneStarts.length) zoneStarts=[{zone:0,i:0}];
+}
+const BLEND = 1.4; // 渐变带宽度（以关卡间距为单位）
+function zoneAt(y, x=W/2){
+  const f = (nodes[0][1]-y)/STEP + (fbm(x/40,y/40)-.5)*BLEND + (hash(x>>3,y>>3)-.5)*.5;
+  let z = zoneStarts[0].zone;
+  for(const b of zoneStarts) if(f >= b.i-.5) z = b.zone;
+  return ZONES[z];
+}
+
+function buildTerrain(H){
+  // 预先画好地形到离屏画布：高度决定颜色，南侧有悬崖，像俯视的立体岛屿
+  const c = document.createElement("canvas"); c.width=W; c.height=H;
+  const g = c.getContext("2d");
+  const cols=W/T, rows=Math.ceil(H/T);
+  const elev=[], land=[];
+  for(let j=0;j<rows;j++){ elev[j]=[]; land[j]=[];
+    for(let i=0;i<cols;i++){
+      const x=i*T, y=j*T;
+      const edge=Math.min(x,W-x)/70;
+      const e=fbm(i/9,j/9)*.9+Math.min(edge,1)*.6-.45;
+      elev[j][i]=e; land[j][i]=e>0.12;
+    }}
+  // 让路两侧一定是陆地
+  for(const pts of curves) for(const [x,y] of pts){
+    for(let dj=-3;dj<=3;dj++) for(let di=-3;di<=3;di++){
+      const i=Math.floor(x/T)+di, j=Math.floor(y/T)+dj;
+      if(land[j]&&land[j][i]!==undefined){ land[j][i]=true; elev[j][i]=Math.max(elev[j][i],.25) }
+    }}
+  // 海
+  for(let j=0;j<rows;j++) for(let i=0;i<cols;i++){
+    const deep = elev[j][i]<-.1;
+    g.fillStyle = deep ? "#0b2238" : "#123a5c";
+    if(!deep && hash(i,j)>.93) g.fillStyle="#1d5a85";
+    g.fillRect(i*T,j*T,T,T);
+  }
+  // 浅滩
+  for(let j=0;j<rows;j++) for(let i=0;i<cols;i++){
+    if(land[j][i]) continue;
+    const near=[[1,0],[-1,0],[0,1],[0,-1]].some(([a,b])=>land[j+b]&&land[j+b][i+a]);
+    if(near){ g.fillStyle="#2a7fa8"; g.fillRect(i*T,j*T,T,T) }
+  }
+  // 悬崖（立体感的关键：陆地下方是水时画一段侧壁）
+  const CLIFF=14;
+  for(let j=0;j<rows;j++) for(let i=0;i<cols;i++){
+    if(!land[j][i] || (land[j+1]&&land[j+1][i])) continue;
+    for(let k=0;k<CLIFF;k+=2){ g.fillStyle = k<4?"#8a5a35":k<9?"#6e4428":"#4f2f1b"; g.fillRect(i*T,j*T+T+k,T,2) }
+    if(hash(i,j+5)>.6){ g.fillStyle="#3c2414"; g.fillRect(i*T+2,j*T+T+3,2,8) }
+  }
+  // 地表：越高越亮，北侧受光
+  for(let j=0;j<rows;j++) for(let i=0;i<cols;i++){
+    if(!land[j][i]) continue;
+    const e=elev[j][i];
+    const z=zoneAt(j*T, i*T);
+    let col = e>.75?z.g[3]:e>.55?z.g[2]:e>.35?z.g[1]:z.g[0];
+    if(e<.2) col=z.sand; // 沙滩
+    g.fillStyle=col; g.fillRect(i*T,j*T,T,T);
+    const up = land[j-1]&&land[j-1][i];
+    if(!up){ g.fillStyle="rgba(255,255,255,.18)"; g.fillRect(i*T,j*T,T,2) }
+    if(land[j][i+1]===false){ g.fillStyle="rgba(0,0,0,.18)"; g.fillRect(i*T+T-2,j*T,2,T) }
+    if(hash(i*3,j)>.9 && e>.3){ g.fillStyle="rgba(0,0,0,.12)"; g.fillRect(i*T+3,j*T+3,2,2) }
+  }
+  // 山：高处画小山峰
+  for(let j=2;j<rows;j+=3) for(let i=2;i<cols;i+=3){
+    if(!land[j][i] || elev[j][i]<.78) continue;
+    if(curves.some(p=>p.some(([x,y])=>Math.abs(x-i*T)<40&&Math.abs(y-j*T)<40))) continue;
+    const x=i*T, y=j*T;
+    g.fillStyle="rgba(0,0,0,.25)"; g.beginPath(); g.moveTo(x-10,y+12); g.lineTo(x+22,y+12); g.lineTo(x+8,y-6); g.fill();
+    g.fillStyle="#7d8597"; g.beginPath(); g.moveTo(x-14,y+10); g.lineTo(x,y-14); g.lineTo(x+14,y+10); g.fill();
+    g.fillStyle="#5c6475"; g.beginPath(); g.moveTo(x,y-14); g.lineTo(x+14,y+10); g.lineTo(x+2,y+10); g.fill();
+    g.fillStyle="#eef0f7"; g.beginPath(); g.moveTo(x-4,y-7); g.lineTo(x,y-14); g.lineTo(x+4,y-7); g.fill();
+  }
+  // 树：带影子的小松树
+  for(let j=0;j<rows;j++) for(let i=0;i<cols;i++){
+    if(!land[j][i] || elev[j][i]<.3 || elev[j][i]>.78 || hash(i*7,j*13)<.9) continue;
+    const x=i*T+4, y=j*T+4;
+    if(curves.some(p=>p.some(([px_,py])=>Math.abs(px_-x)<18&&Math.abs(py-y)<18))) continue;
+    if(nodes.some(([nx,ny])=>Math.abs(nx-x)<30&&Math.abs(ny-y)<30)) continue;
+    g.fillStyle="rgba(0,0,0,.3)"; g.beginPath(); g.ellipse(x+4,y+9,7,3,0,0,7); g.fill();
+    g.fillStyle="#6b4226"; g.fillRect(x-1,y+3,3,6);
+    const tz=zoneAt(y, x).tree;
+    g.fillStyle=tz[0]; g.beginPath(); g.moveTo(x-7,y+5); g.lineTo(x+1,y-11); g.lineTo(x+8,y+5); g.fill();
+    g.fillStyle=tz[1]; g.beginPath(); g.moveTo(x-5,y); g.lineTo(x+1,y-11); g.lineTo(x+1,y); g.fill();
+  }
+  // 小路：先画影子再画路面，路面有砖纹
+  const road=(off,w,col)=>{ g.fillStyle=col; for(const pts of curves) for(const [x,y] of pts) g.fillRect(Math.round(x-w/2),Math.round(y-w/2+off),w,w) };
+  road(4,12,"rgba(0,0,0,.25)"); road(0,12,"#b89a62"); road(0,8,"#e2cc95");
+  for(const pts of curves) pts.forEach(([x,y],k)=>{ if(k%4===0){ g.fillStyle="#c4a873"; g.fillRect(Math.round(x)-1,Math.round(y)-1,3,3) } });
+  // 区域入口的牌子
+  for(const b of zoneStarts){
+    const z=ZONES[b.zone], y=nodes[b.i][1]+58;
+    g.font="14px DotGothic16, sans-serif"; g.textAlign="center";
+    const w=g.measureText(z.name).width+24;
+    g.fillStyle="#3c2414"; g.fillRect(W/2-w/2+3,y+3,w,24);
+    g.fillStyle="#7a4b2a"; g.fillRect(W/2-w/2,y,w,24);
+    g.fillStyle="#f2c14e"; g.fillText(z.name,W/2,y+17);
+  }
+  return c;
+}
+
+function drawNode(i,x,y,s,isToday){
+  const col = !s ? "#6b7393" : {cleared:"#46c37b", shaky:"#f2c14e", unrec:"#7fb0e0", todo:"#8a92b0"}[s.status];
+  // 圆柱形石台：侧面 + 顶面
+  mx.fillStyle="rgba(0,0,0,.35)"; mx.beginPath(); mx.ellipse(x+3,y+12,22,8,0,0,7); mx.fill();
+  mx.fillStyle="#5a4632"; mx.fillRect(x-20,y,40,9);
+  mx.beginPath(); mx.ellipse(x,y+9,20,7,0,0,Math.PI); mx.fill();
+  mx.fillStyle = s&&s.status==="cleared" ? "#8fd8a4" : "#a4917a";
+  mx.beginPath(); mx.ellipse(x,y,20,7,0,0,7); mx.fill();
+  mx.fillStyle = "rgba(255,255,255,.25)"; mx.beginPath(); mx.ellipse(x-4,y-2,10,3,0,0,7); mx.fill();
+  if(isToday){
+    const a=.5+.5*Math.sin(frame/8);
+    mx.strokeStyle=`rgba(242,193,78,${a})`; mx.lineWidth=3; mx.beginPath(); mx.ellipse(x,y,25,10,0,0,7); mx.stroke();
+  }
+  // 旗
+  mx.fillStyle="#eef0f7"; mx.fillRect(x+10,y-34,3,34);
+  const wave=Math.sin(frame/10+i)*2;
+  mx.fillStyle=col; mx.beginPath(); mx.moveTo(x+13,y-34); mx.lineTo(x+30,y-30+wave); mx.lineTo(x+13,y-24); mx.fill();
+  mx.font="9px 'Press Start 2P', monospace"; mx.textAlign="center"; mx.fillStyle="#2b2018"; mx.fillText(String(i+1),x,y+4);
+  if(s){
+    const label=s.name.slice(0,9);
+    mx.font="13px DotGothic16, sans-serif";
+    const w=mx.measureText(label).width+10;
+    mx.fillStyle="rgba(20,24,38,.78)"; mx.fillRect(x-w/2,y+16,w,18);
+    mx.fillStyle="#eef0f7"; mx.fillText(label,x,y+29);
+  }
+}
+
+function drawMap(){
+  const n = data ? data.stages.length : 12;
+  if(!terrain || nodes.length!==n){
+    const H = layout(n); map.height = H; computeZoneStarts(); terrain = buildTerrain(H);
+  }
+  mx.drawImage(terrain,0,0);
+  // 海浪闪光
+  for(let k=0;k<14;k++){
+    const x=(hash(k,1)*W+frame*.4)%W, y=hash(k,2)*map.height;
+    const p=terrain.getContext("2d").getImageData(x|0,y|0,1,1).data;
+    if(p[2]>80&&p[1]<70){ mx.fillStyle="rgba(255,255,255,.35)"; mx.fillRect(x|0,y|0,6,2) }
+  }
+  const todayIdx = data ? data.stages.findIndex(s=>s.status==="todo") : -1;
+  const [cx,cy] = clawdXY || nodes[Math.min(pos,n-1)];
+  // 按 y 排序，让前面的东西挡住后面的
+  const items = nodes.map((p,i)=>({y:p[1],draw:()=>drawNode(i,p[0],p[1],data?data.stages[i]:null,i===todayIdx)}));
+  items.push({y:cy+1,draw:()=>{
+    const bob = walking ? Math.abs(Math.sin(frame/3))*3 : Math.sin(frame/15);
+    drawClawd(mx,cx-16,cy-30-bob,3,tier,frame,walking?(Math.floor(frame/4)%2?1:-1):0);
+  }});
+  items.sort((a,b)=>a.y-b.y).forEach(o=>o.draw());
+  // 云雾：今天的关卡往上 2 关之后都盖住
+  if(data && todayIdx>=0 && todayIdx+2<n){
+    const fogY = nodes[todayIdx+2][1] - 30;
+    const g = mx.createLinearGradient(0,fogY,0,fogY-90);
+    g.addColorStop(0,"rgba(214,222,240,0)"); g.addColorStop(1,"rgba(214,222,240,.94)");
+    mx.fillStyle=g; mx.fillRect(0,fogY-90,W,90);
+    mx.fillStyle="rgba(214,222,240,.94)"; mx.fillRect(0,0,W,fogY-90);
+    for(let k=0;k<10;k++){
+      const cx2=(hash(k,9)*W+frame*.15*(k%2?1:-1)+W)%W, cy2=fogY-60-hash(k,4)*Math.max(0,fogY-120);
+      mx.fillStyle="rgba(255,255,255,.7)";
+      mx.beginPath(); mx.ellipse(cx2,cy2,46,16,0,0,7); mx.ellipse(cx2+30,cy2-8,30,14,0,0,7); mx.fill();
+    }
+    mx.font="15px DotGothic16, sans-serif"; mx.textAlign="center"; mx.fillStyle="#39415e";
+    mx.fillText(`☁ 前方还有 ${n-todayIdx-2} 关，打通眼前的关卡就会散开`, W/2, Math.max(30,fogY-110));
+  }
+}
+
+// 让小 Clawd 保持在可视区域中间
+const stageEl = document.getElementById("scroller");
+document.getElementById("rulesBtn").addEventListener("click",e=>{
+  const log=document.getElementById("hpLog"); log.hidden=!log.hidden; e.currentTarget.setAttribute("aria-expanded",String(!log.hidden));
+});
+function follow(y, smooth){
+  const r = map.getBoundingClientRect(); if(!r.height) return;
+  const target = map.offsetTop + y*(r.height/map.height) - stageEl.clientHeight/2;
+  stageEl.style.scrollBehavior = smooth ? "smooth" : "auto";
+  stageEl.scrollTop = Math.max(0,target);
+}
+(function loop(){ frame++; drawMap(); requestAnimationFrame(loop) })();
+
+function walkTo(target, done){
+  if(walking) return;
+  if(target===pos){ done(); return }
+  walking = true;
+  const dir = target>pos?1:-1, pts=[];
+  for(let i=pos;i!==target;i+=dir){
+    const seg = dir>0 ? curves[i] : [...curves[i-1]].reverse();
+    pts.push(...seg);
+  }
+  let k=0;
+  const speed = Math.max(1, Math.min(4, Math.abs(target-pos)));
+  (function step(){
+    k += speed;
+    if(k>=pts.length){ walking=false; clawdXY=null; pos=target; try{localStorage.setItem("clawd-pos",pos)}catch(e){} done(); return }
+    clawdXY = pts[Math.floor(k)];
+    if(Math.floor(k)%6<speed) follow(clawdXY[1],false);
+    setTimeout(()=>requestAnimationFrame(step),16);
+  })();
+}
+
+map.addEventListener("click",e=>{
+  if(!data||walking) return;
+  const r = map.getBoundingClientRect(), sx = map.width/r.width, sy = map.height/r.height;
+  const x=(e.clientX-r.left)*sx, y=(e.clientY-r.top)*sy;
+  let best=-1, bd=1e9;
+  nodes.forEach(([nx,ny],i)=>{ const d=(nx-x)**2+(ny-y)**2; if(d<bd){bd=d;best=i} });
+  if(best<0 || bd>48*48) return;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(reduce){ pos=best; enterBattle(best,true) } else walkTo(best,()=>enterBattle(best,false));
+});
+
+// ---------- 转场 ----------
+const battle = document.getElementById("battle");
+function enterBattle(i,instant){
+  document.getElementById("stage").classList.add("fighting");
+  if(instant){ map.hidden=true; battle.hidden=false; stageEl.scrollTop=0; openStage(i); return }
+  map.classList.add("blur");
+  setTimeout(()=>{
+    map.hidden=true; map.classList.remove("blur");
+    battle.classList.add("enter"); battle.hidden=false; stageEl.style.scrollBehavior="auto"; stageEl.scrollTop=0; openStage(i);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>battle.classList.remove("enter")));
+  },900);
+}
+document.getElementById("back").addEventListener("click",()=>{
+  battle.classList.add("enter");
+  setTimeout(()=>{ battle.hidden=true; battle.classList.remove("enter"); map.hidden=false; document.getElementById("stage").classList.remove("fighting"); follow(nodes[pos][1],false) },500);
+});
+
+// ---------- 关卡 ----------
+const arena = document.getElementById("arena"), ax = arena.getContext("2d");
+const SLIME = [
+  "....MMMM....",
+  "..MMMMMMMM..",
+  ".MMMMMMMMMM.",
+  "MMWWMMMMWWMM",
+  "MMWEMMMMWEMM",
+  "MMMMMMMMMMMM",
+  "MMMMDDDDMMMM",
+  ".MMMMMMMMMM.",
+  "M.M.M..M.M.M"];
+const MON_COL = {cleared:"#56607f", shaky:"#c9a03a", unrec:"#5a8fc4", todo:"#8d5bd6"};
+let cur = null, monHp = 1, af = 0;
+// 战斗画面 320×180：上方三分之二是战场，下方留给对话框
+const AW=320, GROUND=108;
+function drawArena(shake=0, flash=false, clawdX=60){
+  af++;
+  const z = cur ? ZONES[cur.zone||0] : ZONES[0];
+  const g=ax.createLinearGradient(0,0,0,GROUND); g.addColorStop(0,"#141b36"); g.addColorStop(1,"#3a4f7c");
+  ax.fillStyle=g; ax.fillRect(0,0,AW,GROUND);
+  for(let k=0;k<24;k++){ ax.fillStyle=`rgba(255,255,255,${.3+.3*Math.sin(af/20+k)})`; ax.fillRect(hash(k,1)*AW|0,hash(k,2)*60|0,1,1) }
+  ax.fillStyle="#2c3a60"; ax.beginPath(); ax.moveTo(0,84); ax.lineTo(60,50); ax.lineTo(120,78); ax.lineTo(190,40); ax.lineTo(260,72); ax.lineTo(320,56); ax.lineTo(320,GROUND); ax.lineTo(0,GROUND); ax.fill();
+  ax.fillStyle="#1f2b4d"; ax.beginPath(); ax.moveTo(0,98); ax.lineTo(80,80); ax.lineTo(150,96); ax.lineTo(230,82); ax.lineTo(320,98); ax.lineTo(320,GROUND); ax.lineTo(0,GROUND); ax.fill();
+  ax.fillStyle=z.g[1]; ax.fillRect(0,GROUND,AW,180-GROUND);
+  for(let x=0;x<AW;x+=8){ ax.fillStyle=(x/8)%2?z.g[0]:z.g[2]; ax.fillRect(x,GROUND,8,3) }
+  for(let k=0;k<30;k++){ ax.fillStyle=z.g[0]; ax.fillRect(hash(k,5)*AW|0,GROUND+6+hash(k,6)*60|0,3,2) }
+  drawClawd(ax,clawdX,GROUND-26,3,tier,af);
+  if(monHp>0){
+    const S=SLIME, s=4, mx0=204+shake, my0=GROUND-36;
+    ax.fillStyle="rgba(0,0,0,.35)"; ax.beginPath(); ax.ellipse(mx0+24,my0+37,24,5,0,0,7); ax.fill();
+    S.forEach((row,j)=>[...row].forEach((c,i)=>{ if(c===".")return;
+      ax.fillStyle = c==="E"||c==="D"?"#141826":c==="W"?"#eef0f7":(flash?"#fff":MON_COL[cur.status]);
+      ax.fillRect(mx0+i*s,my0+j*s,s,s) }));
+    ax.fillStyle="rgba(255,255,255,.25)"; ax.fillRect(mx0+12,my0+4,8,4);
+  }
+  ax.fillStyle="#141826"; ax.fillRect(202,GROUND-50,52,7);
+  ax.fillStyle="#e5484d"; ax.fillRect(203,GROUND-49,50*monHp,5);
+}
+function openStage(i){
+  cur = data.stages[i];
+  monHp = cur.status==="cleared" ? 0 : cur.status==="todo" ? 1 : 0.5;
+  const tag = document.getElementById("bTag");
+  tag.className = "tag "+(cur.status==="unrec"?"shaky":cur.status);
+  tag.textContent = {cleared:"已通关",shaky:"待复测",unrec:"没有记录",todo:"未开打"}[cur.status]+" · 第 "+(i+1)+" 关";
+  document.getElementById("bName").textContent = cur.full;
+  let info;
+  if(cur.status==="cleared") info = `<span class="hl">命中 ${cur.wins} 次</span>（独立完成、全对、输出一致），<span class="dmg">被反击 ${cur.hints} 次</span>（经提示、经指出）。${esc(cur.lv)}。`;
+  else if(cur.status==="shaky") info = `这只怪还剩一半血：${esc(cur.lv)}。下次闭卷复习通过，它就倒下。`;
+  else if(cur.status==="unrec") info = `这个模块已经学过，但学习卡里没有这一项的验收记录。请 02 老师复测一次，通过后这关就变绿。`;
+  else info = data.stages.findIndex(s=>s.status==="todo")===i && data.today
+      ? `今天（${data.wd}）的任务：${esc(data.today)}` : "还没开打。学习卡里这一项过了 02 老师验收，这关就自动通关。";
+  document.getElementById("bInfo").innerHTML = info;
+  document.getElementById("bEv").textContent = cur.ev || "暂无记录。";
+  document.getElementById("fight").textContent = cur.status==="cleared" ? "再看一遍胜利" : "出击！";
+  drawArena();
+}
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"})[c]) }
+
+document.getElementById("fight").addEventListener("click",()=>{
+  if(!cur) return;
+  const target = cur.status==="cleared" ? 0 : cur.status==="todo" ? 1 : 0.5;
+  if(cur.status==="cleared") monHp = 1;
+  let f=0;
+  (function anim(){
+    f++;
+    const x = f<10 ? 60+f*12 : f<20 ? 168-(f-10)*10.8 : 60;
+    if(f===10 && cur.status!=="todo") monHp = target;
+    drawArena(f>=10&&f<16?(f%2?3:-3):0, f>=10&&f<13, x);
+    if(f<22){ setTimeout(()=>requestAnimationFrame(anim),20); return }
+    ax.textAlign="center"; ax.font="13px DotGothic16";
+    if(cur.status==="cleared"){ ax.fillStyle="#46c37b"; ax.fillText("通关！",AW/2,30) }
+    else { ax.fillStyle="#f2c14e"; ax.fillText({shaky:"抖点还在！复习后再来",unrec:"没有记录，找 02 老师复测",todo:"先去学习卡完成这一关"}[cur.status],AW/2,30) }
+  })();
+});
+
+// ---------- 渲染状态 ----------
+function render(){
+  const {hp,douN} = computeHp(data);
+  const cleared = data.stages.filter(s=>s.status==="cleared").length;
+  tier = tierOf(cleared);
+  document.getElementById("hpv").textContent = hp+"/100";
+  const bar = document.getElementById("hpi"); bar.style.width = hp+"%"; bar.className = hp>=60?"ok":"";
+  document.getElementById("sCleared").textContent = cleared;
+  document.getElementById("sShaky").textContent = data.stages.filter(s=>s.status==="shaky"||s.status==="unrec").length;
+  document.getElementById("formName").textContent = FORMS[tier].name;
+  document.getElementById("lvl").textContent = cleared;
+  const fc = document.getElementById("face").getContext("2d");
+  fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, 0);
+  const next = FORMS[tier+1];
+  document.getElementById("formNext").textContent = next ? `★ 再过 ${next.min-cleared} 关进化成「${next.name}」` : "★ 已是最强形态";
+  document.getElementById("hpLog").innerHTML = `<li>起始血量 <b>100</b></li>`
+    + data.dou.map(d=>`<li class="dmg">抖点·${esc(d.topic)}：${d.n} 个，<b>−${d.n*5}</b></li>`).join("")
+    + `<li class="hl">闭卷复习完成 ${data.reviews} 次：<b>+${data.reviews*10}</b></li>`
+    + `<li class="hl">短测全对 ${data.allRight} 次：<b>+${data.allRight*5}</b></li>`
+    + `<li>合计 ${douN} 个抖点，当前 <b>${hp}</b>（上限 100）</li>`
+    + `<li>形态：通关 0 关见习，3 关战士（头巾），6 关剑士（剑），10 关骑士（头盔、披风），15 关王者（王冠、光环）</li>`;
+  // 升级检测：和上次打开时的通关数比较
+  let last = null;
+  try{ const v = localStorage.getItem("clawd-cleared"); last = v===null ? null : +v }catch(e){}
+  if(last!==null && cleared>last) setTimeout(()=>levelUp(last, cleared), 600);
+  try{ localStorage.setItem("clawd-cleared", cleared) }catch(e){}
+  if(pos>=data.stages.length) pos=0;
+  terrain = null;
+  drawMap();
+  [60,300,900].forEach(ms=>setTimeout(()=>{ if(!map.hidden) follow(nodes[pos][1],false) },ms));
+}
+// ---------- 升级特效 ----------
+// 闪白 → 冲击波 → 旋转光柱 → 粒子爆发 → 小 Clawd 放大弹跳；跨形态时新旧外观闪烁切换（进化）
+const fx = document.getElementById("fx"), fxc = fx.getContext("2d");
+let fxRun = 0;
+function levelUp(from, to){
+  const oldT = tierOf(from), newT = tierOf(to), evolve = newT>oldT;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  fx.width = innerWidth*dpr; fx.height = innerHeight*dpr; fx.hidden = false;
+  const Wf = fx.width, Hf = fx.height, cx = Wf/2, cy = Hf*.46, u = Math.min(Wf,Hf)/100;
+  const parts = Array.from({length:140},()=>{ const a=Math.random()*7, sp=(1+Math.random()*3.5)*u*.6;
+    return {x:cx,y:cy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-u*.6,s:(1+Math.random()*2)*u*.5,c:["#f2c14e","#ffe9a8","#d97757","#ffffff","#46c37b"][Math.random()*5|0]} });
+  const id = ++fxRun, dur = evolve ? 4200 : 3000, t0 = performance.now();
+  const close = ()=>{ if(fxRun===id){ fxRun++; fx.hidden=true } };
+  fx.onclick = close;
+  (function draw(now){
+    if(fxRun!==id) return;
+    const t = reduce ? 1.6 : (now-t0)/1000;
+    fxc.clearRect(0,0,Wf,Hf);
+    // 暗场
+    fxc.fillStyle = `rgba(8,10,20,${Math.min(.82,t*2)})`; fxc.fillRect(0,0,Wf,Hf);
+    // 旋转光柱
+    const rays = evolve ? 20 : 14;
+    fxc.save(); fxc.translate(cx,cy); fxc.rotate(t*.8);
+    for(let k=0;k<rays;k++){
+      fxc.rotate(Math.PI*2/rays);
+      fxc.fillStyle = k%2 ? `rgba(242,193,78,${.22*Math.min(1,t*2)})` : `rgba(255,233,168,${.12*Math.min(1,t*2)})`;
+      fxc.beginPath(); fxc.moveTo(0,0); fxc.lineTo(-u*5,-Hf); fxc.lineTo(u*5,-Hf); fxc.fill();
+    }
+    fxc.restore();
+    // 冲击波
+    for(const d of [0,.25,.5]){
+      const r = Math.max(0,(t-d))*u*90, a = Math.max(0,1-(t-d)*1.2);
+      if(a<=0||t<d) continue;
+      fxc.strokeStyle = `rgba(255,233,168,${a})`; fxc.lineWidth = u*1.6*a+1;
+      fxc.beginPath(); fxc.arc(cx,cy,r,0,7); fxc.stroke();
+    }
+    // 粒子
+    if(!reduce) for(const p of parts){ p.x+=p.vx; p.y+=p.vy; p.vy+=u*.035; p.vx*=.99;
+      fxc.fillStyle=p.c; fxc.globalAlpha=Math.max(0,1-t/2.6); fxc.fillRect(p.x,p.y,p.s,p.s) }
+    fxc.globalAlpha = 1;
+    // 小 Clawd：放大弹跳，进化时新旧形态闪烁
+    const sc = u*1.4*(1+Math.max(0,.6-t)*1.2+Math.sin(t*9)*.04*Math.max(0,2-t));
+    const showT = evolve && t<1.8 ? (Math.floor(t*(4+t*8))%2 ? newT : oldT) : newT;
+    fxc.save(); fxc.imageSmoothingEnabled=false;
+    if(evolve && t>1.8 && t<2.1){ fxc.fillStyle=`rgba(255,255,255,${1-(t-1.8)/.3})`; fxc.fillRect(0,0,Wf,Hf) }
+    drawClawd(fxc, cx-5.5*sc, cy-4*sc, sc, showT, now/16);
+    fxc.restore();
+    // 文字
+    const pop = Math.min(1,Math.max(0,(t-.3)*3));
+    fxc.textAlign="center";
+    fxc.font = `${Math.round(u*6*(0.6+.4*pop))}px "Press Start 2P", monospace`;
+    fxc.fillStyle="#000"; fxc.fillText(evolve?"EVOLUTION!":"LEVEL UP!", cx+u*.6, cy-u*17+u*.6);
+    fxc.fillStyle=`hsl(${40+Math.sin(t*6)*12},90%,62%)`; fxc.fillText(evolve?"EVOLUTION!":"LEVEL UP!", cx, cy-u*17);
+    fxc.font = `${Math.round(u*4)}px DotGothic16, sans-serif`;
+    fxc.fillStyle = `rgba(238,240,247,${pop})`;
+    fxc.fillText(evolve ? `${FORMS[oldT].name} → ${FORMS[newT].name}` : `Lv.${from} → Lv.${to}`, cx, cy+u*16);
+    fxc.font = `${Math.round(u*2.4)}px DotGothic16, sans-serif`;
+    fxc.fillStyle = `rgba(154,163,194,${pop})`;
+    fxc.fillText(evolve ? "小 Clawd 换上了新装备！" : `又打败了 ${to-from} 只怪`, cx, cy+u*21);
+    if(t>1.2) { fxc.fillStyle=`rgba(154,163,194,${Math.min(1,t-1.2)*.8})`; fxc.fillText("点击继续", cx, Hf-u*6) }
+    if(reduce || (now-t0)<dur+60000) requestAnimationFrame(draw);
+  })(t0);
+}
+document.getElementById("formNext").addEventListener("click",()=>{
+  if(!data) return;
+  const c = data.stages.filter(s=>s.status==="cleared").length, t = tierOf(c);
+  levelUp(Math.max(0, t>0 ? FORMS[t].min-1 : c-1), c);
+});
+
+function setStatus(msg, err){ const s=document.getElementById("status"); s.hidden=!msg; s.textContent=msg||""; s.classList.toggle("err",!!err) }
+
+// ---------- 数据来源：你的 Google Apps Script ----------
+// 网址只存在你自己的浏览器里，不写进代码，所以网站公开也不会泄露它。
+// 也可以用 ?src=网址 打开一次，之后会记住。
+const POLL_MS = 2*60*1000;
+let srcUrl = "", lastText = "", pollTimer = 0;
+try{
+  const q = new URLSearchParams(location.search).get("src");
+  if(q){ localStorage.setItem("clawd-src", q); history.replaceState(null,"",location.pathname) }
+  srcUrl = localStorage.getItem("clawd-src") || "";
+}catch(e){}
+
+function showSetup(){
+  let box = document.getElementById("setup");
+  if(!box){
+    box = document.createElement("form");
+    box.id = "setup"; box.className = "setup";
+    box.innerHTML = `<h2>连接你的学习卡</h2>
+      <p>粘贴 Google Apps Script 部署后的网址（以 https://script.google.com/macros/s/ 开头）。</p>
+      <input id="srcInput" type="url" required placeholder="https://script.google.com/macros/s/…/exec">
+      <div style="display:flex;gap:8px"><button type="submit">开始冒险</button><button class="ghost" type="button" id="setupCancel">取消</button></div>`;
+    document.getElementById("stage").appendChild(box);
+    box.addEventListener("submit",e=>{
+      e.preventDefault();
+      srcUrl = document.getElementById("srcInput").value.trim();
+      try{ localStorage.setItem("clawd-src", srcUrl) }catch(err){}
+      box.hidden = true; lastText = ""; load();
+    });
+    document.getElementById("setupCancel").addEventListener("click",()=>{ box.hidden = true });
+  }
+  document.getElementById("srcInput").value = srcUrl;
+  box.hidden = false;
+}
+
+async function load(){
+  if(!srcUrl){ setStatus("还没连接学习卡，点 ⚙ 粘贴 Apps Script 网址。",true); showSetup(); return }
+  try{
+    const r = await fetch(srcUrl, {cache:"no-store"});
+    if(!r.ok) throw new Error("http "+r.status);
+    const p = await r.json();
+    const text = p.fileContent || "";
+    if(!text){ setStatus("读到了数据，但学习卡是空的。检查 Apps Script 里的 DOC_ID。",true); return }
+    const time = new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});
+    if(text !== lastText){ lastText = text; data = parseCard(text); render() }
+    setStatus(`学习卡最后更新 ${data.updated||"未知"} · ${time} 已同步，每 2 分钟自动刷新`);
+  }catch(e){
+    setStatus(lastText ? "这次同步失败了，显示的是上次的数据。稍后会自动重试。"
+      : "读不到学习卡。检查 Apps Script 是否部署为「任何人」可访问，网址是否以 /exec 结尾。点 ⚙ 修改。", true);
+  }
+}
+function startPolling(){
+  clearInterval(pollTimer);
+  pollTimer = setInterval(()=>{ if(!document.hidden) load() }, POLL_MS);
+}
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load() });
+document.getElementById("refresh").addEventListener("click",()=>load());
+document.getElementById("settings").addEventListener("click",showSetup);
+
+load(); startPolling();
+</script>
+</body>
+</html>
