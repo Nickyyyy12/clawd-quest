@@ -64,8 +64,9 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
 .lg-flags i{display:inline-block;width:10px;height:8px;margin-right:4px;border:1px solid #000;vertical-align:middle}
 .legend .log{max-height:40vh;overflow:auto;align-self:stretch;border-top:2px dashed var(--line);padding-top:4px;font-size:12px}
 .battle:not([hidden]) ~ .legend, .stage.fighting .legend{display:none}
+[hidden]{display:none!important}
 canvas{display:block;image-rendering:pixelated;max-width:100%}
-#map{width:100%;max-width:min(100%,960px);margin:0 auto;height:auto;cursor:pointer;transition:filter .9s ease,opacity .9s ease,transform .9s ease}
+#map{width:100%;margin:0;height:auto;cursor:pointer;transition:filter .9s ease,opacity .9s ease,transform .9s ease}
 #map.blur{filter:blur(14px) brightness(.6);transform:scale(1.06);opacity:.4}
 .note{font-size:13px;color:var(--dim);margin:0}
 .status{padding:10px 14px;border:3px dashed var(--line);font-size:14px}
@@ -74,7 +75,7 @@ canvas{display:block;image-rendering:pixelated;max-width:100%}
 .battle{position:relative;height:100%;background:#1b2442;transition:filter .7s ease,opacity .7s ease}
 .battle.enter{filter:blur(14px);opacity:0}
 .battle canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:cover;object-position:center 30%}
-@media (max-aspect-ratio:1/1){.battle canvas{object-fit:contain;object-position:center top}}
+@media (max-aspect-ratio:1/1){.battle canvas{object-fit:contain;object-position:center 40%}}
 .side{position:absolute;left:max(12px,2%);right:max(12px,2%);bottom:12px;max-height:34%;overflow:auto;
   padding:10px 14px;display:flex;flex-direction:column;gap:6px;min-width:0;
   background:rgba(20,24,38,.88);border:3px solid var(--ink);box-shadow:0 0 0 3px #000}
@@ -336,9 +337,13 @@ function drawClawd(ctx,x,y,s,tier,t=0,legPhase=0){
 
 // ---------- 地图 ----------
 const map = document.getElementById("map"), mx = map.getContext("2d");
-const W = map.width, T = 8;
+let W = map.width; const T = 8;
+// 画布逻辑宽度 = 游戏区宽度 ÷ 放大倍数，宽屏时两侧自然延伸出更多陆地和海
+function fitWidth(){ const cw = document.getElementById("stage").clientWidth || 480; const sc = Math.min(2, Math.max(1, cw/480)); return Math.max(480, Math.round(cw/sc/T)*T) }
+let resizeT = 0;
+addEventListener("resize",()=>{ clearTimeout(resizeT); resizeT = setTimeout(()=>{ if(fitWidth()!==W){ terrain = null } },200) });
 let data = null, pos = 0, walking = false, frame = 0, clawdXY = null, legPhase = 0;
-let nodes = [], curves = [], terrain = null, tier = 0;
+let nodes = [], curves = [], terrain = null, tier = 0, landGrid = [];
 try{ pos = +localStorage.getItem("clawd-pos")||0 }catch(e){}
 
 function layout(n){
@@ -396,7 +401,7 @@ function buildTerrain(H){
   const c = document.createElement("canvas"); c.width=W; c.height=H;
   const g = c.getContext("2d");
   const cols=W/T, rows=Math.ceil(H/T);
-  const elev=[], land=[];
+  const elev=[], land=[]; landGrid = land;
   for(let j=0;j<rows;j++){ elev[j]=[]; land[j]=[];
     for(let i=0;i<cols;i++){
       const x=i*T, y=j*T;
@@ -500,8 +505,10 @@ function drawNode(i,x,y,s,isToday){
   mx.fillStyle=col; mx.beginPath(); mx.moveTo(x+13,y-34); mx.lineTo(x+30,y-30+wave); mx.lineTo(x+13,y-24); mx.fill();
   mx.font="9px 'Press Start 2P', monospace"; mx.textAlign="center"; mx.fillStyle="#2b2018"; mx.fillText(String(i+1),x,y+4);
   if(s){
-    const label=s.name.slice(0,9);
-    mx.font="13px DotGothic16, sans-serif";
+    let label=s.name, fs_=13;
+    mx.font=`${fs_}px DotGothic16, sans-serif`;
+    while(mx.measureText(label).width>150 && fs_>10){ fs_--; mx.font=`${fs_}px DotGothic16, sans-serif` }
+    while(mx.measureText(label).width>150 && label.length>2) label=label.slice(0,-2)+"…";
     const w=mx.measureText(label).width+10;
     mx.fillStyle="rgba(20,24,38,.78)"; mx.fillRect(x-w/2,y+16,w,18);
     mx.fillStyle="#eef0f7"; mx.fillText(label,x,y+29);
@@ -511,24 +518,28 @@ function drawNode(i,x,y,s,isToday){
 function drawMap(){
   const n = data ? data.stages.length : 12;
   if(!terrain || nodes.length!==n){
+    W = fitWidth(); map.width = W;
     const H = layout(n); map.height = H; computeZoneStarts(); terrain = buildTerrain(H);
   }
-  mx.drawImage(terrain,0,0);
+  const sc = map.height/(map.clientHeight||map.height);
+  const vy0 = Math.max(0, Math.floor((stageEl.scrollTop-map.offsetTop)*sc) - 80);
+  const vh = Math.min(map.height-vy0, Math.ceil(stageEl.clientHeight*sc) + 160);
+  if(vh>0) mx.drawImage(terrain,0,vy0,W,vh,0,vy0,W,vh);
   // 海浪闪光
-  for(let k=0;k<14;k++){
-    const x=(hash(k,1)*W+frame*.4)%W, y=hash(k,2)*map.height;
-    const p=terrain.getContext("2d").getImageData(x|0,y|0,1,1).data;
-    if(p[2]>80&&p[1]<70){ mx.fillStyle="rgba(255,255,255,.35)"; mx.fillRect(x|0,y|0,6,2) }
+  for(let k=0;k<40;k++){
+    const x=(hash(k,1)*W+frame*.4)%W, y=vy0+hash(k,2)*vh;
+    const row=landGrid[Math.floor(y/T)];
+    if(row && row[Math.floor(x/T)]===false){ mx.fillStyle="rgba(255,255,255,.35)"; mx.fillRect(x|0,y|0,6,2) }
   }
   const todayIdx = data ? data.stages.findIndex(s=>s.status==="todo") : -1;
   const [cx,cy] = clawdXY || nodes[Math.min(pos,n-1)];
   // 按 y 排序，让前面的东西挡住后面的
-  const items = nodes.map((p,i)=>({y:p[1],draw:()=>drawNode(i,p[0],p[1],data?data.stages[i]:null,i===todayIdx)}));
+  const items = nodes.map((p,i)=>({y:p[1],vis:p[1]>vy0-60&&p[1]<vy0+vh+60,draw:()=>drawNode(i,p[0],p[1],data?data.stages[i]:null,i===todayIdx)}));
   items.push({y:cy+1,draw:()=>{
     const bob = walking ? Math.abs(Math.sin(frame/3))*3 : Math.sin(frame/15);
     drawClawd(mx,cx-16,cy-30-bob,3,tier,frame,walking?(Math.floor(frame/4)%2?1:-1):0);
   }});
-  items.sort((a,b)=>a.y-b.y).forEach(o=>o.draw());
+  items.filter(o=>o.vis!==false).sort((a,b)=>a.y-b.y).forEach(o=>o.draw());
   // 云雾：今天的关卡往上 2 关之后都盖住
   if(data && todayIdx>=0 && todayIdx+2<n){
     const fogY = nodes[todayIdx+2][1] - 30;
@@ -568,14 +579,14 @@ function walkTo(target, done){
     const seg = dir>0 ? curves[i] : [...curves[i-1]].reverse();
     pts.push(...seg);
   }
-  let k=0;
-  const speed = Math.max(1, Math.min(4, Math.abs(target-pos)));
-  (function step(){
-    k += speed;
+  const speed = Math.max(1, Math.min(4, Math.abs(target-pos))), t0 = performance.now();
+  let lastFollow = 0;
+  (function step(now=performance.now()){
+    const k = (now-t0)/1000*45*speed;
     if(k>=pts.length){ walking=false; clawdXY=null; pos=target; try{localStorage.setItem("clawd-pos",pos)}catch(e){} done(); return }
     clawdXY = pts[Math.floor(k)];
-    if(Math.floor(k)%6<speed) follow(clawdXY[1],false);
-    setTimeout(()=>requestAnimationFrame(step),16);
+    if(now-lastFollow>120){ lastFollow=now; follow(clawdXY[1],false) }
+    requestAnimationFrame(step);
   })();
 }
 
