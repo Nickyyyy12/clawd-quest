@@ -749,7 +749,7 @@ function updateDaily(){
   renderBag();
 }
 
-function drawFace(){ const fe=document.getElementById("face"), k=Math.max(1,Math.round(36*DPR()))/48; fe.width=fe.height=Math.round(48*k); const fc=fe.getContext("2d"); fc.setTransform(k,0,0,k,0,0); fc.imageSmoothingEnabled=false; fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, frame) }
+function drawFace(){ if(STYLE==="toy" && window.T3 && T3.portrait){ const fe = document.getElementById("face"); fe.width = fe.height = 96; return T3.portrait(fe, true) } const fe=document.getElementById("face"), k=Math.max(1,Math.round(36*DPR()))/48; fe.width=fe.height=Math.round(48*k); const fc=fe.getContext("2d"); fc.setTransform(k,0,0,k,0,0); fc.imageSmoothingEnabled=false; fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, frame) }
 
 // ---------- 画风：pixel（像素）/ smooth（圆润卡通）----------
 // smooth 画风用矢量图形：渐变、圆角、曲线；关卡、数据、机制和像素版完全一样
@@ -1968,7 +1968,8 @@ const T3 = { ok:false };
       legs.forEach(l=>l.rotation.x*=.85);
       if(!fight && !celebrate){ let dr = -clawd.rotation.y + (reduce?0:Math.sin(t*.4)*.25); clawd.rotation.y += Math.atan2(Math.sin(dr),Math.cos(dr))*.02 }
     }
-    eyes.forEach(e=>e.scale.y = DAILY.hungry ? .35 : 1);
+    stepFace(dt);
+    if(STYLE==="toy" && T3.portrait) T3.portrait(document.getElementById("face"));
     // 营火大小跟着连续学习天数
     const lv = DAILY.fire||0;
     flames.forEach((f,i)=>{ f.visible = lv>0; const s=(.55+lv*.12)*(1+(reduce?0:Math.sin(t*9+i*2)*.12)); f.scale.setScalar(s); f.rotation.y=t*(1.4+i*.6) });
@@ -2434,6 +2435,51 @@ const T3 = { ok:false };
     out.getContext("2d").drawImage(TH.r.domElement, 0, 0);
     TH.sc.remove(m);
     return thumbs[o.id] = out;
+  };
+
+
+  // ---------- 小 Clawd 的脸：高光、腮红、嘴巴、眨眼，表情跟着状态变 ----------
+  const shine = [-.33,.33].map(x=>{ const m = new THREE.Mesh(rbox(.045,.09,.02,.01), mat("#ffffff",{roughness:.3})); m.position.set(x+.025,1.17,.535); body.add(m); return m });
+  [-.55,.55].forEach(x=>{ const m = new THREE.Mesh(rbox(.2,.09,.02,.03), mat("#ff8f96",{transparent:true, opacity:.75})); m.position.set(x,.9,.51); body.add(m) });
+  const ink = mat("#1d1a1a",{roughness:.4});
+  const mouths = {
+    calm:  [[0,.86,.16,.045,0]],                                           // 一字小嘴
+    happy: [[-.07,.85,.12,.045,-.5],[.07,.85,.12,.045,.5]],               // 笑成一个小 v
+    sad:   [[-.07,.86,.12,.045,.45],[.07,.86,.12,.045,-.45]]              // 嘴角往下
+  };
+  const mouthG = {};
+  Object.entries(mouths).forEach(([k,parts])=>{
+    const g = new THREE.Group();
+    parts.forEach(([x,y,w,h,rz])=>{ const m = new THREE.Mesh(rbox(w,h,.03,.015), ink); m.position.set(x,y,.52); m.rotation.z = rz; g.add(m) });
+    g.visible = k==="calm"; body.add(g); mouthG[k] = g;
+  });
+  let nextBlink = 2, blinkT = 0;
+  const mood = ()=> DAILY.hungry ? "sad" : DAILY.studiedToday ? "happy" : "calm";
+  function stepFace(dt){
+    const m = mood();
+    Object.entries(mouthG).forEach(([k,g])=>g.visible = k===m);
+    // 眨眼：每 2 到 5 秒闭一下；饿了眼睛半闭
+    nextBlink -= dt;
+    if(nextBlink < 0){ blinkT = .14; nextBlink = 2 + Math.random()*3 }
+    if(blinkT > 0) blinkT -= dt;
+    const open = DAILY.hungry ? .35 : 1;
+    eyes.forEach(e=>e.scale.y = blinkT > 0 ? .1 : open);
+    shine.forEach(s=>s.visible = blinkT <= 0 && !DAILY.hungry);
+  }
+  // 左上角头像：用 3D 小舞台给当前的小 Clawd 拍一张大头照
+  let lastPortrait = "";
+  T3.portrait = (canvas, force)=>{
+    const sig = JSON.stringify([LOOK, tier, mood()]);
+    if(!force && sig===lastPortrait) return; lastPortrait = sig;
+    if(!TH) T3.thumb(LOOT[0]);                          // 借用缩略图的舞台
+    const c = clawd.clone(true); c.position.set(0,0,0); c.rotation.set(0,.42,0); c.visible = true;
+    TH.ped.visible = false; TH.sc.add(c);
+    const camPos = TH.cam.position.clone();
+    TH.cam.position.set(.4, 1.55, 4.4); TH.cam.lookAt(.1, .95, 0); TH.cam.updateProjectionMatrix();
+    TH.r.render(TH.sc, TH.cam);
+    const g = canvas.getContext("2d"); g.clearRect(0,0,canvas.width,canvas.height);
+    g.drawImage(TH.r.domElement, 16, 0, 160, 160, 0, 0, canvas.width, canvas.height);
+    TH.sc.remove(c); TH.ped.visible = true; TH.cam.position.copy(camPos); TH.cam.lookAt(0,.9,0);
   };
 
   T3.debug = ()=>({dist:camera.position.distanceTo(controls.target), target:controls.target.toArray().map(v=>+v.toFixed(2)), cam:camera.position.toArray().map(v=>+v.toFixed(2)), zooming, fight:!!fight});
