@@ -1556,7 +1556,57 @@ const T3 = { ok:false };
     const m = new THREE.Mesh(g, mat(color)); m.position.set(x, yTop-depth-bevel, z); m.castShadow = true; m.receiveShadow = true;
     return m;
   }
-  function buildIsland(world, k, zone, ox, oy, cz, len, nodePts){
+
+  // ---------- 地标：每个区域一个，远远就能看到 ----------
+  // 草原的风车、山谷的红枫巨树、雪原的雪山、王城的火山和城堡
+  const flat = (c, o={}) => new THREE.MeshStandardMaterial(Object.assign({color:new THREE.Color(c).convertSRGBToLinear(), roughness:.9, metalness:0, flatShading:true}, o));
+  function mesh(geo, material, x, y, z){ const m = new THREE.Mesh(geo, material); m.position.set(x,y,z); return m }
+  function landmark(zoneIdx){
+    const g = new THREE.Group();
+    if(zoneIdx===0){                                         // 风车
+      g.add(box(3,.5,3,"#c9b48e",0,.25,0,.15));
+      let y = .5;
+      [[2.2,2.3,"#f4ead8"],[1.9,2.1,"#efe3cc"],[1.6,1.9,"#e9dcc2"]].forEach(([w,h,c])=>{ g.add(box(w,h,w,c,0,y+h/2,0,.18)); y += h });
+      g.add(mesh(new THREE.ConeGeometry(1.35,1.8,8), flat("#c8553d"), 0, y+.9, 0));
+      g.add(box(.6,1,.12,"#7a4b2a",0,1,1.12,.05));
+      [[-.5,3.4],[.5,5.4]].forEach(([x,yy])=>g.add(box(.36,.36,.1,"#7cb7d8",x,yy,0.82,.04)));
+      const blades = new THREE.Group(); blades.position.set(0, y-.4, 1.05); blades.userData.blades = true;
+      blades.add(box(.4,.4,.3,"#7a4b2a",0,0,0,.08));
+      for(let i=0;i<4;i++){ const arm = new THREE.Group(); arm.rotation.z = i*Math.PI/2; arm.add(box(.12,3.2,.08,"#8a5a3a",0,1.7,0,.03)); arm.add(box(.62,2.6,.05,"#f7f1e6",.36,1.9,.04,.03)); blades.add(arm) }
+      g.add(blades);
+    } else if(zoneIdx===1){                                  // 红枫巨树
+      g.add(box(1.2,4.6,1.2,"#7a4b2a",0,2.3,0,.22));
+      const br1 = box(.5,2.2,.5,"#7a4b2a",.9,4.3,0,.12); br1.rotation.z = -.7; g.add(br1);
+      const br2 = box(.5,2,.5,"#7a4b2a",-.8,4.6,.2,.12); br2.rotation.z = .7; g.add(br2);
+      [[0,6.2,0,3.6,"#c8462f"],[1.9,5.4,.4,2.6,"#e0633a"],[-1.8,5.6,-.3,2.7,"#d9542f"],[.4,7.6,.2,2.4,"#f08a4a"],[-.6,5.3,1.6,2.2,"#e0633a"],[.8,5.6,-1.5,2.2,"#c8462f"]]
+        .forEach(([x,y,z,s,c])=>g.add(box(s,s*.8,s,c,x,y,z,s*.22)));
+      [[2.6,.1,1.4],[-2.2,.1,-1.6],[1.2,.1,-2.4],[-1.4,.1,2.2]].forEach(([x,y,z])=>{ const l = box(.4,.06,.3,"#e0633a",x,y,z,.02); l.rotation.y = x; g.add(l) });   // 地上的落叶
+    } else if(zoneIdx===2){                                  // 雪山：三座低多边形山峰
+      [[0,0,0,4.6,8.2],[-3.6,0,1.2,2.8,4.6],[3.2,0,-.8,3,5.4]].forEach(([x,y,z,r,h],i)=>{
+        g.add(mesh(new THREE.ConeGeometry(r,h,7,1), flat(i ? "#9aa5b8" : "#8f9bb0"), x, h/2, z));
+        g.add(mesh(new THREE.ConeGeometry(r*.44,h*.44,7,1), flat("#f6f8fb"), x, h - h*.22 + .02, z));
+      });
+    } else {                                                 // 熔岩王城：火山 + 城堡
+      g.add(mesh(new THREE.CylinderGeometry(1.3,4.4,6.5,9,1), flat("#5a3d3a"), 0, 3.25, 0));
+      const lava = mesh(new THREE.CylinderGeometry(1.2,1.2,.25,9), new THREE.MeshStandardMaterial({color:new THREE.Color("#ff7a2e").convertSRGBToLinear(), emissive:new THREE.Color("#ff6a1e").convertSRGBToLinear(), emissiveIntensity:.9, roughness:.6}), 0, 6.45, 0);
+      lava.userData.lava = true; g.add(lava);
+      [[.6,4.6,1.8,.3,2.6,.35],[-1.2,3.6,2.4,.3,3.4,-.4]].forEach(([x,y,z,w,h,rz])=>{ const s = mesh(new THREE.BoxGeometry(w,h,.12), lava.material, x, y, z); s.rotation.z = rz; s.rotation.x = -.42; g.add(s) });
+      const glow = new THREE.PointLight("#ff7a2e", 1.4, 9); glow.position.set(0,7.2,0); g.add(glow);
+      const c = new THREE.Group(); c.position.set(4.8,0,1.2); g.add(c);                // 城堡
+      c.add(box(3.4,1.6,2.6,"#8a7a76",0,.8,0,.12));
+      c.add(box(1.2,1.4,.12,"#3b2a28",0,.7,1.32,.04));
+      [[-1.6,-1.2],[1.6,-1.2],[-1.6,1.2],[1.6,1.2]].forEach(([x,z])=>{
+        c.add(mesh(new THREE.CylinderGeometry(.5,.55,3,8), flat("#9a8a86"), x, 1.5, z));
+        c.add(mesh(new THREE.ConeGeometry(.7,1.1,8), flat("#8f2f2a"), x, 3.55, z));
+      });
+      c.add(mesh(new THREE.CylinderGeometry(.03,.03,1.4,4), flat("#3b2a28"), 1.6, 4.6, -1.2));
+      c.add(box(.8,.45,.04,"#e5484d",2.0,5.0,-1.2,.02));
+    }
+    g.traverse(m=>{ if(m.isMesh){ m.castShadow = true; m.receiveShadow = true } });
+    return g;
+  }
+
+  function buildIsland(world, k, zone, ox, oy, cz, len, nodePts, zIdx){
     const halfW = 6.6, halfL = len/2 + 1.6, seed = k*2.3+1;
     const pts = islandOutline(halfW, halfL, seed);
     const top = oy + .2;
@@ -1576,6 +1626,7 @@ const T3 = { ok:false };
       hill.scale.y = .55 + r(t*7)*.4; hill.position.set(x, top-.02, z); hill.castShadow = true; hill.receiveShadow = true;
       world.add(hill); made++;
     }
+    let lakeAt = null;
     // 湖 + 小溪 + 从岛边流下去的瀑布
     for(let t=0; t<10; t++){
       const side = r(t*3+40)>.5 ? 1 : -1;
@@ -1583,7 +1634,7 @@ const T3 = { ok:false };
       if(!inside(x,z,2) || !farFromPath(x,z,2.6)) continue;
       const water = mat("#7cc3e3", {roughness:.25, metalness:0, transparent:true, opacity:.92});
       const lake = new THREE.Mesh(new THREE.CircleGeometry(1, 28), water); lake.rotation.x = -Math.PI/2; lake.scale.set(rw, rl, 1);
-      lake.position.set(x, top+.02, z); lake.receiveShadow = true; world.add(lake);
+      lake.position.set(x, top+.02, z); lake.receiveShadow = true; world.add(lake); lakeAt = [x, z];
       const shore = new THREE.Mesh(new THREE.RingGeometry(1, 1.12, 28), mat("#e8d8ad")); shore.rotation.x = -Math.PI/2; shore.scale.set(rw, rl, 1); shore.position.set(x, top+.015, z); world.add(shore);
       // 小溪：从湖往外一直流到岛边
       let ex = x; while(inside(ex + side*.3, z) && Math.abs(ex-x) < 12) ex += side*.3;
@@ -1599,7 +1650,25 @@ const T3 = { ok:false };
       mist.scale.set(2.4,1.6,1); mist.position.set(ex + side*.3, top-6, z); world.add(mist);
       break;
     }
-    return {pts, inside};
+    // 地标：在岛上找一块离小路和湖都最远的地方
+    let best = null, bestD = 0, any = null, anyD = 0;   // any：找不到足够远的位置时，退而求其次用最远的那个
+    for(let t=0;t<120;t++){
+      const x = ox + (r(t*2+300)-.5)*halfW*3.4, z = cz + (r(t*2+301)-.5)*halfL*1.7;
+      if(!inside(x, z, 1.4)) continue;
+      const d = Math.min(...nodePts.map(([a,b])=>Math.hypot(a-x,b-z)));
+      if(d > anyD && !(lakeAt && Math.hypot(lakeAt[0]-x, lakeAt[1]-z) < 4)){ anyD = d; any = [x,z] }
+      if(!inside(x, z, 2.6)) continue;
+      if(d < [4,4.5,6.5,7.5][zIdx] || (lakeAt && Math.hypot(lakeAt[0]-x, lakeAt[1]-z) < 4.5)) continue;
+      if(d > bestD){ bestD = d; best = [x,z] }
+    }
+    let lm = null;
+    if(!best && anyD >= 3) best = any;
+    if(best){
+      const L = landmark(zIdx); L.position.set(best[0], top-.02, best[1]);
+      L.rotation.y = Math.atan2(ox-best[0], 6) + (zIdx===3 ? Math.PI : 0);
+      world.add(L); lm = [best[0], best[1], [3,4,5.5,7][zIdx]];
+    }
+    return {pts, inside, lm};
   }
   // 远景：天空渐变、远处的海、漂在四周的小岛和云（每次重建时整体铺一遍）
   let skyTex = null;
@@ -1631,7 +1700,7 @@ const T3 = { ok:false };
       for(let q=0;q<3+(i%3);q++) g.add(box(2.4*s*(1-q*.15), 1.1*s, 1.6*s, "#ffffff", (q-1)*1.6*s, (q%2)*.4*s, (r(i*7+q)-.5)*.8*s, .5*s, {roughness:1}));
       g.children.forEach(m=>m.castShadow = false);
       const side = r(i+120)>.5 ? 1 : -1;
-      g.position.set(side*(10 + r(i+140)*34), -9 + r(i+160)*22, zMin - 10 + r(i+180)*(zMax-zMin+30));
+      g.position.set(side*(18 + r(i+140)*34), -10 + r(i+160)*20, zMin - 10 + r(i+180)*(zMax-zMin+30));
       g.userData.drift = true; g.userData.x0 = g.position.x; g.userData.ph = i;
       world.add(g);
     }
@@ -1661,12 +1730,13 @@ const T3 = { ok:false };
         if(i===0) T3.origin = {x, z:zz};
       });
       // 岛：不规则轮廓的草地 + 一层层往下收窄的泥土和岩石；上面有山丘、湖和瀑布
-      const isl = buildIsland(world, k, z, ox, oy, cz, len, g.idx.map(i=>[pos3[i].x, pos3[i].z]));
+      const isl = buildIsland(world, k, z, ox, oy, cz, len, g.idx.map(i=>[pos3[i].x, pos3[i].z]), g.zone);
       // 树：避开小路
       const r = (a)=>hash(k*97+a, 13);
       for(let t=0;t<g.idx.length*3.4;t++){
         const x = ox + (r(t*3)-.5)*19, zz = cz + (r(t*3+1)-.5)*(len+2.4);
         if(!isl.inside(x, zz, .9)) continue;
+        if(isl.lm && Math.hypot(x-isl.lm[0], zz-isl.lm[1]) < isl.lm[2]) continue;
         if(g.idx.some(i=>Math.hypot(pos3[i].x-x, pos3[i].z-zz) < 2.1)) continue;
         const s = .55 + r(t*3+2)*.4, leaf = r(t*7)>.5 ? z.tree[1] : z.tree[0];
         treeRefs.push({x, z:zz, items:[
@@ -1729,7 +1799,7 @@ const T3 = { ok:false };
       world.add(im); batchMeshes[key] = im;
     });
     // 不会动的东西冻结矩阵，每帧少算几百次
-    world.traverse(o=>{ if(o!==world && !o.isSprite && !o.userData.spin && !o.userData.pulse && !o.userData.cloud && !o.userData.drift){ o.updateMatrix(); o.matrixAutoUpdate = false } });
+    world.traverse(o=>{ if(o!==world && !o.isSprite && !o.userData.spin && !o.userData.pulse && !o.userData.cloud && !o.userData.drift && !o.userData.blades && !o.userData.lava){ o.updateMatrix(); o.matrixAutoUpdate = false } });
     T3.pos3 = pos3;
     hideLoader(); if(perf.first){ perf.first = false; perf.on = true }
     at = Math.min(pos, n-1);
@@ -1818,7 +1888,7 @@ const T3 = { ok:false };
     ember.visible = lv===0; fireLight.intensity = lv>0 ? (.6+lv*.25+(reduce?0:Math.sin(t*13)*.15)) : .25;
     chest.visible = DAILY.unopened && DAILY.unopened.length>0 && !hops.length;
     if(chest.visible && !reduce && !chestAnim){ chest.position.y = (T3.pos3[at]?T3.pos3[at].base:0) + Math.abs(Math.sin(t*2.4))*.15 }
-    world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4; if(o.userData.drift && !reduce) o.position.x = o.userData.x0 + Math.sin(t*.06+o.userData.ph)*4 });
+    world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4; if(o.userData.drift && !reduce) o.position.x = o.userData.x0 + Math.sin(t*.06+o.userData.ph)*4; if(o.userData.blades && !reduce) o.rotation.z = -t*.7; if(o.userData.lava) o.material.emissiveIntensity = .75 + Math.sin(t*2.4)*.3 });
     stepWarp(dt); stepBattle(dt,t); stepCelebrate(dt); stepFx(dt); stepGear(dt,t); stepChest(dt);
     // 镜头跟着小 Clawd；进入关卡时拉近
     controls.target.lerp(camTarget, .06);
