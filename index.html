@@ -1458,8 +1458,7 @@ const T3 = { ok:false };
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = .95;
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#f3ece4");
-  scene.fog = new THREE.Fog("#f3ece4", 40, 90);
+  scene.fog = new THREE.Fog("#eef0ec", 48, 150);
   const camera = new THREE.PerspectiveCamera(34, 1, .1, 300);
   camera.position.set(14, 15, 16);
   const controls = new THREE.OrbitControls(camera, cv);
@@ -1534,7 +1533,112 @@ const T3 = { ok:false };
   let at = 0, hops = [], hopT = 0, from = null, hopTarget = -1;
   const camTarget = new THREE.Vector3();
 
+
+  // ---------- 世界感：不规则的浮空岛 + 地形 + 远景 ----------
+  // 岛的轮廓：沿着椭圆一圈取点，用几层正弦波让边缘有海湾和半岛
+  function islandOutline(halfW, halfL, seed, n=48){
+    const pts = [];
+    for(let i=0;i<n;i++){
+      const a = i/n*Math.PI*2;
+      const wob = 1 + Math.sin(a*3+seed)*.09 + Math.sin(a*5+seed*1.7)*.06 + Math.sin(a*9+seed*.3)*.035;
+      // 两侧各鼓出一块半岛，让岛不再是一根长条
+      const lobe = 1 + .55*Math.exp(-Math.pow(Math.atan2(Math.sin(a-seed),Math.cos(a-seed))/.38,2)) + .4*Math.exp(-Math.pow(Math.atan2(Math.sin(a-seed-2.6),Math.cos(a-seed-2.6))/.32,2));
+      pts.push([Math.cos(a)*halfW*wob*lobe, Math.sin(a)*halfL*wob*(1+(lobe-1)*.25)]);
+    }
+    return pts;
+  }
+  const inPoly = (pts,x,z)=>{ let ins=false; for(let i=0,j=pts.length-1;i<pts.length;j=i++){ const [xi,zi]=pts[i],[xj,zj]=pts[j]; if(((zi>z)!==(zj>z)) && x<(xj-xi)*(z-zi)/(zj-zi)+xi) ins=!ins } return ins };
+  // 把轮廓挤出成一层厚板（圆角边），scale 用来做往下收窄的岩层
+  function slab(pts, scale, depth, bevel, color, x, yTop, z){
+    const s = new THREE.Shape(); pts.forEach(([px,pz],i)=>{ const X=px*scale, Y=-pz*scale; i ? s.lineTo(X,Y) : s.moveTo(X,Y) }); s.closePath();
+    const g = new THREE.ExtrudeGeometry(s, {depth, bevelEnabled:true, bevelThickness:bevel, bevelSize:bevel, bevelSegments:3, curveSegments:4});
+    g.rotateX(-Math.PI/2); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat(color)); m.position.set(x, yTop-depth-bevel, z); m.castShadow = true; m.receiveShadow = true;
+    return m;
+  }
+  function buildIsland(world, k, zone, ox, oy, cz, len, nodePts){
+    const halfW = 6.6, halfL = len/2 + 1.6, seed = k*2.3+1;
+    const pts = islandOutline(halfW, halfL, seed);
+    const top = oy + .2;
+    world.add(slab(pts, 1,   .3, .22, zone.g[1], ox, top, cz));             // 草地
+    world.add(slab(pts, .97, 1.1, .25, "#c99a6b", ox, top-.45, cz));        // 泥土
+    world.add(slab(pts, .78, 1.2, .3, "#b08560", ox, top-1.7, cz));         // 岩层
+    world.add(slab(pts, .55, 1.2, .3, "#9b7552", ox, top-3.0, cz));
+    world.add(slab(pts, .3, 1.0, .25, "#87664a", ox, top-4.1, cz));        // 底下的尖
+    const inside = (x,z,margin=0)=>inPoly(pts.map(([a,b])=>[a*(1-margin/halfW), b*(1-margin/halfL)]), x-ox, z-cz);
+    const farFromPath = (x,z,d)=>nodePts.every(([a,b])=>Math.hypot(a-x,b-z) > d);
+    const r = a=>hash(k*131+a, 29);
+    // 小山丘：压扁的球，颜色比草地略深
+    for(let t=0, made=0; t<24 && made<6; t++){
+      const x = ox + (r(t*2)-.5)*halfW*2.6, z = cz + (r(t*2+1)-.5)*halfL*1.7, rad = 1.2 + r(t*5)*1.5;
+      if(!inside(x,z,rad+.4) || !farFromPath(x,z,rad+1.6)) continue;
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(rad, 18, 10, 0, Math.PI*2, 0, Math.PI/2), mat(mix(zone.g[1], "#000000", .08)));
+      hill.scale.y = .55 + r(t*7)*.4; hill.position.set(x, top-.02, z); hill.castShadow = true; hill.receiveShadow = true;
+      world.add(hill); made++;
+    }
+    // 湖 + 小溪 + 从岛边流下去的瀑布
+    for(let t=0; t<10; t++){
+      const side = r(t*3+40)>.5 ? 1 : -1;
+      const x = ox + side*(2.2 + r(t*3+41)*2.2), z = cz + (r(t*3+42)-.5)*halfL*1.2, rw = 1.2, rl = .9;
+      if(!inside(x,z,2) || !farFromPath(x,z,2.6)) continue;
+      const water = mat("#7cc3e3", {roughness:.25, metalness:0, transparent:true, opacity:.92});
+      const lake = new THREE.Mesh(new THREE.CircleGeometry(1, 28), water); lake.rotation.x = -Math.PI/2; lake.scale.set(rw, rl, 1);
+      lake.position.set(x, top+.02, z); lake.receiveShadow = true; world.add(lake);
+      const shore = new THREE.Mesh(new THREE.RingGeometry(1, 1.12, 28), mat("#e8d8ad")); shore.rotation.x = -Math.PI/2; shore.scale.set(rw, rl, 1); shore.position.set(x, top+.015, z); world.add(shore);
+      // 小溪：从湖往外一直流到岛边
+      let ex = x; while(inside(ex + side*.3, z) && Math.abs(ex-x) < 12) ex += side*.3;
+      const sl = Math.abs(ex - x) - rw*.6;
+      if(sl > .2){
+        const stream = new THREE.Mesh(new THREE.PlaneGeometry(sl, .42), water); stream.rotation.x = -Math.PI/2;
+        stream.position.set(x + side*(rw*.6 + sl/2), top+.021, z); world.add(stream);
+      }
+      // 瀑布：一条半透明的水帘挂在岛边，下面一团水雾
+      const fall = new THREE.Mesh(new THREE.PlaneGeometry(.42, 6), mat("#9fd4ec", {transparent:true, opacity:.72, side:THREE.DoubleSide, emissive:new THREE.Color("#7cc3e3").convertSRGBToLinear(), emissiveIntensity:.15}));
+      fall.position.set(ex + side*.18, top-3, z); fall.rotation.y = Math.PI/2; fall.userData.fall = true; world.add(fall);
+      const mist = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex(), color:"#ffffff", transparent:true, opacity:.55, depthWrite:false}));
+      mist.scale.set(2.4,1.6,1); mist.position.set(ex + side*.3, top-6, z); world.add(mist);
+      break;
+    }
+    return {pts, inside};
+  }
+  // 远景：天空渐变、远处的海、漂在四周的小岛和云（每次重建时整体铺一遍）
+  let skyTex = null;
+  function sky(){
+    if(skyTex) return skyTex;
+    const c = document.createElement("canvas"); c.width = 4; c.height = 256; const g = c.getContext("2d");
+    const gr = g.createLinearGradient(0,0,0,256);
+    gr.addColorStop(0,"#9fcbea"); gr.addColorStop(.45,"#cfe4f1"); gr.addColorStop(.72,"#f4ede4"); gr.addColorStop(1,"#f6efe6");
+    g.fillStyle = gr; g.fillRect(0,0,4,256);
+    skyTex = new THREE.CanvasTexture(c); skyTex.encoding = THREE.sRGBEncoding;
+    return skyTex;
+  }
+  function scenery(world, zMin, zMax){
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), mat("#a9d3e6", {roughness:.6}));
+    sea.rotation.x = -Math.PI/2; sea.position.set(0, -16, (zMin+zMax)/2); world.add(sea);
+    const r = a=>hash(a, 71);
+    // 远处的小浮岛：同样的做法缩小，雾会把它们变成淡淡的剪影
+    for(let i=0;i<14;i++){
+      const side = i%2 ? 1 : -1, x = side*(26 + r(i)*40), z = zMin + r(i+20)*(zMax-zMin+40) - 20, y = -7 + r(i+40)*12, s = .4 + r(i+60)*.7;
+      const pts = islandOutline(6*s, 5*s, i*1.9);
+      world.add(slab(pts, 1, .3*s+.1, .2, "#9ec08a", x, y, z));
+      world.add(slab(pts, .8, 1.4*s+.3, .25, "#c4a07a", x, y-.5, z));
+      world.add(slab(pts, .4, 1.4*s+.3, .2, "#a88562", x, y-2.2*s-.6, z));
+      if(r(i+80)>.4){ const tr = new THREE.Mesh(TREE_GEO.c1, mat("#6aa35c")); tr.position.set(x+(r(i+90)-.5)*3*s, y+.5*s+.3, z); tr.scale.setScalar(s*1.2); world.add(tr) }
+    }
+    // 云：一团团白色圆角方块，有的在岛下面，有的在远处慢慢飘
+    for(let i=0;i<26;i++){
+      const g = new THREE.Group(), s = .8 + r(i+100)*1.6;
+      for(let q=0;q<3+(i%3);q++) g.add(box(2.4*s*(1-q*.15), 1.1*s, 1.6*s, "#ffffff", (q-1)*1.6*s, (q%2)*.4*s, (r(i*7+q)-.5)*.8*s, .5*s, {roughness:1}));
+      g.children.forEach(m=>m.castShadow = false);
+      const side = r(i+120)>.5 ? 1 : -1;
+      g.position.set(side*(10 + r(i+140)*34), -9 + r(i+160)*22, zMin - 10 + r(i+180)*(zMax-zMin+30));
+      g.userData.drift = true; g.userData.x0 = g.position.x; g.userData.ph = i;
+      world.add(g);
+    }
+  }
+
   function build(){
+    scene.background = sky();
     if(world){ scene.remove(world); world.traverse(o=>{ if(o.material && o.material.map) o.material.map.dispose() }) }
     world = new THREE.Group(); scene.add(world);
     batches = new Map(); treeRefs = []; batchMeshes = {};
@@ -1550,21 +1654,19 @@ const T3 = { ok:false };
       const len = g.idx.length*STEP3 + 3, ox = (k%2 ? 3.2 : -3.2), oy = k*1.4, cz = oz - len/2 + 1.5;
       const z = ZONES[g.zone];
       g.box = {ox, oy, cz, len};
-      // 岛：草地顶 + 泥土 + 往下收窄的岩石，像浮在空中
-      world.add(box(12, .5, len, z.g[1], ox, oy-.05, cz, .25));
-      world.add(box(11.6, 1.4, len-.4, "#c99a6b", ox, oy-1.0, cz, .3));
-      world.add(box(9, 1.2, len*.75, "#b08560", ox, oy-2.1, cz, .3));
-      world.add(box(5.5, 1, len*.45, "#9b7552", ox, oy-3.0, cz, .3));
       // 关卡沿着弯曲的小路排开
       g.idx.forEach((i,j)=>{
         const x = ox + Math.sin(j*.9+k)*3.3, zz = oz - j*STEP3, h = .45 + j*.04;
         pos3[i] = {x, z:zz, y:oy+.2+h, h, base:oy+.2, ox};
         if(i===0) T3.origin = {x, z:zz};
       });
+      // 岛：不规则轮廓的草地 + 一层层往下收窄的泥土和岩石；上面有山丘、湖和瀑布
+      const isl = buildIsland(world, k, z, ox, oy, cz, len, g.idx.map(i=>[pos3[i].x, pos3[i].z]));
       // 树：避开小路
       const r = (a)=>hash(k*97+a, 13);
-      for(let t=0;t<g.idx.length*1.6;t++){
-        const x = ox + (r(t*3)-.5)*10.6, zz = cz + (r(t*3+1)-.5)*(len-1.2);
+      for(let t=0;t<g.idx.length*3.4;t++){
+        const x = ox + (r(t*3)-.5)*19, zz = cz + (r(t*3+1)-.5)*(len+2.4);
+        if(!isl.inside(x, zz, .9)) continue;
         if(g.idx.some(i=>Math.hypot(pos3[i].x-x, pos3[i].z-zz) < 2.1)) continue;
         const s = .55 + r(t*3+2)*.4, leaf = r(t*7)>.5 ? z.tree[1] : z.tree[0];
         treeRefs.push({x, z:zz, items:[
@@ -1587,6 +1689,7 @@ const T3 = { ok:false };
       oz -= len + 5;
     });
     T3.islands = groups.map(g=>({zone:g.zone, ox:g.box.ox, oy:g.box.oy, cz:g.box.cz, len:g.box.len}));
+    scenery(world, oz, 10);
     // 关卡台阶、编号、名字
     const COL = {cleared:"#8fcf9a", shaky:"#f2c35b", unrec:"#9cc6ef", todo:"#e7e1d9"};
     st.forEach((s,i)=>{
@@ -1626,7 +1729,7 @@ const T3 = { ok:false };
       world.add(im); batchMeshes[key] = im;
     });
     // 不会动的东西冻结矩阵，每帧少算几百次
-    world.traverse(o=>{ if(o!==world && !o.isSprite && !o.userData.spin && !o.userData.pulse && !o.userData.cloud){ o.updateMatrix(); o.matrixAutoUpdate = false } });
+    world.traverse(o=>{ if(o!==world && !o.isSprite && !o.userData.spin && !o.userData.pulse && !o.userData.cloud && !o.userData.drift){ o.updateMatrix(); o.matrixAutoUpdate = false } });
     T3.pos3 = pos3;
     hideLoader(); if(perf.first){ perf.first = false; perf.on = true }
     at = Math.min(pos, n-1);
@@ -1715,7 +1818,7 @@ const T3 = { ok:false };
     ember.visible = lv===0; fireLight.intensity = lv>0 ? (.6+lv*.25+(reduce?0:Math.sin(t*13)*.15)) : .25;
     chest.visible = DAILY.unopened && DAILY.unopened.length>0 && !hops.length;
     if(chest.visible && !reduce && !chestAnim){ chest.position.y = (T3.pos3[at]?T3.pos3[at].base:0) + Math.abs(Math.sin(t*2.4))*.15 }
-    world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4 });
+    world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4; if(o.userData.drift && !reduce) o.position.x = o.userData.x0 + Math.sin(t*.06+o.userData.ph)*4 });
     stepWarp(dt); stepBattle(dt,t); stepCelebrate(dt); stepFx(dt); stepGear(dt,t); stepChest(dt);
     // 镜头跟着小 Clawd；进入关卡时拉近
     controls.target.lerp(camTarget, .06);
