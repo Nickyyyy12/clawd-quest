@@ -144,6 +144,10 @@ body:not(.toy) .loader3d{display:none}
   .side{max-height:46%;left:8px;right:8px;bottom:8px;padding:8px 10px}
   .side h2{font-size:15px}
 }
+/* 区域按钮 */
+.zones{gap:4px 4px}
+.zones .chip.zb{font-size:11px;color:var(--ink);text-decoration:none;padding:1px 7px;border:1px solid rgba(127,127,127,.35);border-radius:999px;background:transparent}
+.zones .chip.zb.on{background:#f2c14e;border-color:#f2c14e;color:#3a3330}
 /* 升级特效层 */
 #fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
 .toast.err{color:#ff9aa0}
@@ -208,7 +212,7 @@ details summary{cursor:pointer;color:var(--ink)}
       </div>
       <div style="display:flex;gap:4px;align-self:start">
         <button class="ghost icon" id="refresh" type="button" title="刷新学习卡" aria-label="刷新学习卡">↻</button>
-        <button class="ghost icon" id="styleBtn" type="button" title="切换画风：3D / 像素" aria-label="切换画风">🎨</button><button class="ghost icon" id="homeBtn" type="button" title="回到今天的关卡" aria-label="回到今天的关卡">📍</button>
+        <button class="ghost icon" id="styleBtn" type="button" title="切换画风：3D / 像素" aria-label="切换画风">🎨</button><button class="ghost icon" id="homeBtn" type="button" title="回到小 Clawd / 今天的关卡" aria-label="回到小 Clawd 或今天的关卡">📍</button>
         <button class="ghost icon" id="settings" type="button" title="连接设置" aria-label="连接设置">⚙</button>
       </div>
       <div class="chips">
@@ -222,6 +226,7 @@ details summary{cursor:pointer;color:var(--ink)}
         <button class="chip" id="chestBtn" type="button" hidden>🎁 <b id="chestN">0</b> 个宝箱</button>
         <button class="chip" id="bagBtn" type="button">🎒 背包</button>
       </div>
+      <div class="chips zones" id="zoneBtns" aria-label="快速查看区域"></div>
       <div class="toast" id="status">正在连接 Google Drive，读取学习状态卡…</div>
     </div></section>
     <aside class="legend" aria-label="图例">
@@ -1228,6 +1233,7 @@ function render(){
   const cleared = data.stages.filter(s=>s.status==="cleared").length;
   tier = tierOf(cleared);
   updateDaily();
+  renderZoneBtns();
   if(window.T3rebuild && STYLE==="toy") T3rebuild();
   document.getElementById("hpv").textContent = hp+"/100";
   const bar = document.getElementById("hpi"); bar.style.width = hp+"%"; bar.className = hp>=60?"ok":"";
@@ -1325,6 +1331,24 @@ document.getElementById("formNext").addEventListener("click",()=>{
   levelUp(Math.max(0, t>0 ? FORMS[t].min-1 : c-1), c);
 });
 
+// ---------- 区域按钮：快速回看别的区域 ----------
+const ZONE_ICON = ["🌱","🍁","❄","🌋"], ZONE_SHORT = ["草原","山谷","雪原","王城"];
+function renderZoneBtns(){
+  const box = document.getElementById("zoneBtns"); if(!box || !data) return;
+  box.innerHTML = "";
+  [...new Set(data.stages.map(s=>s.zone))].forEach(z=>{
+    const b = document.createElement("button"); b.type = "button"; b.className = "chip zb"; b.dataset.zone = z;
+    b.textContent = ZONE_ICON[z]+" "+ZONE_SHORT[z]; b.title = "镜头飞到「"+ZONES[z].name+"」，只看不走";
+    b.onclick = ()=>lookZone(z); box.append(b);
+  });
+}
+function markZone(z){ document.querySelectorAll("#zoneBtns .zb").forEach(b=>b.classList.toggle("on", z!==null && +b.dataset.zone===z)) }
+function lookZone(z){
+  if(STYLE==="toy" && window.T3 && T3.lookZone) return T3.lookZone(z);
+  const i = data.stages.findIndex(s=>s.zone===z);       // 像素版：把地图滚到这个区域
+  if(i>=0 && nodes[i]) follow(nodes[i][1], true);
+}
+
 function setStatus(msg, err){ const s=document.getElementById("status"); s.hidden=!msg; s.textContent=msg||""; s.classList.toggle("err",!!err) }
 
 // ---------- 数据来源：你的 Google Apps Script ----------
@@ -1392,6 +1416,7 @@ document.getElementById("bagClose").addEventListener("click",()=>{ document.getE
 document.getElementById("styleBtn").addEventListener("click",toggleStyle);
 document.getElementById("homeBtn").addEventListener("click",()=>{
   if(!data) return;
+  if(STYLE==="toy" && window.T3 && T3.isLooking && T3.isLooking()) return T3.lookBack();
   if(STYLE==="toy" && window.T3 && T3.goToday) return T3.goToday();
   const i = data.stages.findIndex(x=>x.status==="todo");
   if(i>=0 && !walking) walkTo(i, ()=>{});
@@ -1542,6 +1567,7 @@ const T3 = { ok:false };
       }
       oz -= len + 5;
     });
+    T3.islands = groups.map(g=>({zone:g.zone, ox:g.box.ox, oy:g.box.oy, cz:g.box.cz, len:g.box.len}));
     // 关卡台阶、编号、名字
     const COL = {cleared:"#8fcf9a", shaky:"#f2c35b", unrec:"#9cc6ef", todo:"#e7e1d9"};
     st.forEach((s,i)=>{
@@ -1681,7 +1707,7 @@ const T3 = { ok:false };
     renderer.render(scene, camera);
     // 气泡位置
     if(bubble){
-      const show = !hops.length && !warpA && !zooming && !document.getElementById("stage").classList.contains("fighting");
+      const show = !hops.length && !warpA && looking===null && !zooming && !document.getElementById("stage").classList.contains("fighting");
       bubble.hidden = !show;
       if(show){
         v.set(clawd.position.x, clawd.position.y+2.1, clawd.position.z).project(camera);
@@ -1960,6 +1986,7 @@ const T3 = { ok:false };
   let hopBattle = true, warpA = null;
   function travelTo(to, battle){
     if(hops.length || warpA || to<0) return;
+    looking = null; markZone(null);
     if(to===at){ if(battle) zoomIn(to); return }
     hopBattle = battle;
     if(Math.abs(to-at) > 4){ warpA = {t:0, to, from:clawd.position.clone(), left:false, landed:false}; return }
@@ -1998,6 +2025,19 @@ const T3 = { ok:false };
   }
 
   T3.goToday = ()=>{ if(!data) return; const i = data.stages.findIndex(x=>x.status==="todo"); travelTo(i<0 ? data.stages.length-1 : i, false) };
+
+  // ---------- 只看不走：镜头飞到某座岛 ----------
+  let looking = null;
+  T3.lookZone = z=>{
+    const isl = (T3.islands||[]).find(o=>o.zone===z);
+    if(!isl || hops.length || warpA || fight) return;
+    looking = z; markZone(z);
+    camTarget.set(isl.ox, isl.oy+.5, isl.cz);
+    zooming = {t:0, from:camera.position.distanceTo(controls.target), to:Math.min(34, isl.len*.5+14), out:true};
+  };
+  T3.isLooking = ()=>looking!==null;
+  T3.lookBack = ()=>{ looking = null; markZone(null); place(); zooming = {t:0, from:camera.position.distanceTo(controls.target), to:16, out:true} };
+
   T3.debug = ()=>({dist:camera.position.distanceTo(controls.target), target:controls.target.toArray().map(v=>+v.toFixed(2)), cam:camera.position.toArray().map(v=>+v.toFixed(2)), zooming, fight:!!fight});
   T3.start = startBattle; T3.attack = attack; T3.endBattle = ()=>endBattle(false); T3.levelUp = levelUp3D;
   T3.unzoom = ()=>{ zooming = {t:0, from:camera.position.distanceTo(controls.target), to:16, out:true} };
