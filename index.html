@@ -1644,10 +1644,10 @@ const T3 = { ok:false };
         stream.position.set(x + side*(rw*.6 + sl/2), top+.021, z); world.add(stream);
       }
       // 瀑布：一条半透明的水帘挂在岛边，下面一团水雾
-      const fall = new THREE.Mesh(new THREE.PlaneGeometry(.42, 6), mat("#9fd4ec", {transparent:true, opacity:.72, side:THREE.DoubleSide, emissive:new THREE.Color("#7cc3e3").convertSRGBToLinear(), emissiveIntensity:.15}));
+      const fall = new THREE.Mesh(new THREE.PlaneGeometry(.42, 6), waterMat());
       fall.position.set(ex + side*.18, top-3, z); fall.rotation.y = Math.PI/2; fall.userData.fall = true; world.add(fall);
       const mist = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex(), color:"#ffffff", transparent:true, opacity:.55, depthWrite:false}));
-      mist.scale.set(2.4,1.6,1); mist.position.set(ex + side*.3, top-6, z); world.add(mist);
+      mist.scale.set(2.4,1.6,1); mist.position.set(ex + side*.3, top-6, z); mist.userData.mist = true; world.add(mist);
       break;
     }
     // 地标：在岛上找一块离小路和湖都最远的地方
@@ -1667,6 +1667,7 @@ const T3 = { ok:false };
       const L = landmark(zIdx); L.position.set(best[0], top-.02, best[1]);
       L.rotation.y = Math.atan2(ox-best[0], 6) + (zIdx===3 ? Math.PI : 0);
       world.add(L); lm = [best[0], best[1], [3,4,5.5,7][zIdx]];
+      T3.lm[zIdx] = {x:best[0], y:top, z:best[1]};
     }
     return {pts, inside, lm};
   }
@@ -1706,8 +1707,93 @@ const T3 = { ok:false };
     }
   }
 
+
+  // ---------- 世界感第 3 步：让世界动起来 ----------
+  // 小鸟绕着岛飞、瀑布的水往下流、山谷飘枫叶、雪原下雪、火山冒烟
+  let waterT = null;
+  function waterMat(){
+    if(waterMat.m) return waterMat.m;
+    const c = document.createElement("canvas"); c.width = 32; c.height = 128; const g = c.getContext("2d");
+    g.fillStyle = "#9fd4ec"; g.fillRect(0,0,32,128);
+    for(let i=0;i<14;i++){ g.fillStyle = `rgba(255,255,255,${.25+Math.random()*.45})`; g.fillRect(Math.random()*28, Math.random()*128, 2+Math.random()*3, 10+Math.random()*26) }
+    waterT = new THREE.CanvasTexture(c); waterT.wrapS = waterT.wrapT = THREE.RepeatWrapping; waterT.repeat.set(1, 2.5); waterT.encoding = THREE.sRGBEncoding;
+    return waterMat.m = new THREE.MeshStandardMaterial({map:waterT, transparent:true, opacity:.85, side:THREE.DoubleSide, roughness:.4, emissive:new THREE.Color("#7cc3e3").convertSRGBToLinear(), emissiveIntensity:.18});
+  }
+  let amb = null;
+  function ambient(world){
+    const isl = T3.islands || [], lm = T3.lm || {};
+    amb = {birds:[], parts:[], smoke:[], mist:[], dummy:new THREE.Object3D()};
+    world.traverse(o=>{ if(o.userData.mist) amb.mist.push(o) });
+    // 小鸟：每座岛上空一群，3 到 5 只
+    isl.forEach((s,f)=>{
+      const flock = new THREE.Group();
+      flock.userData = {cx:s.ox, cz:s.cz, cy:s.oy+6.5+(f%2)*1.5, r:5+s.len*.12, sp:.22+f*.04, ph:f*1.7};
+      for(let b=0;b<3+(f%3);b++){
+        const bird = new THREE.Group();
+        const wl = box(.62,.04,.26,"#4a4440",-.33,0,0,.02), wr = box(.62,.04,.26,"#4a4440",.33,0,0,.02);
+        bird.add(box(.26,.14,.5,"#3a3330",0,0,0,.05), wl, wr);
+        bird.position.set((b%2?1:-1)*Math.ceil(b/2)*.8, (b%3)*.25, -Math.ceil(b/2)*.9);
+        bird.userData = {wl, wr, ph:b*.7};
+        flock.add(bird);
+      }
+      world.add(flock); amb.birds.push(flock);
+    });
+    // 飘落的东西：枫叶围着红枫巨树，雪花铺满雪原
+    const fallers = (zone, count, geo, color, center, spread, height, speed, sway)=>{
+      const i = isl.find(o=>o.zone===zone); if(!i) return;
+      const im = new THREE.InstancedMesh(geo, mat(color,{roughness:1}), count); im.frustumCulled = false;
+      const c = center || {x:i.ox, z:i.cz}, ps = [];
+      for(let n=0;n<count;n++) ps.push({x:c.x+(Math.random()-.5)*spread[0], y:i.oy+.2+Math.random()*height, z:c.z+(Math.random()-.5)*spread[1], ph:Math.random()*6, rs:.5+Math.random()*2.5});
+      im.userData = {ps, floor:i.oy+.2, height, speed, sway};
+      world.add(im); amb.parts.push(im);
+    };
+    const maple = lm[1];
+    fallers(1, 70, rbox(.24,.03,.18,.01), "#e0633a", maple ? {x:maple.x, z:maple.z} : null, maple ? [9,9] : [14, 20], maple ? 8 : 9, .55, .9);
+    const snowI = isl.find(o=>o.zone===2);
+    if(snowI) fallers(2, 150, rbox(.1,.1,.1,.04), "#ffffff", null, [16, snowI.len+4], 10, .8, .35);
+    // 火山烟：一串柔和的灰色烟团，从火山口升起、变大、淡出
+    const v = lm[3];
+    if(v){
+      for(let n=0;n<12;n++){
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex(), color:"#8d827e", transparent:true, opacity:0, depthWrite:false}));
+        sp.userData = {t:n/12*4.5}; sp.position.set(v.x, v.y+6.6, v.z); world.add(sp); amb.smoke.push(sp);
+      }
+      amb.smokeAt = v;
+    }
+  }
+  function stepAmbient(dt, t){
+    if(waterT) waterT.offset.y += dt*1.1;
+    if(!amb || reduce) return;
+    amb.birds.forEach(f=>{
+      const u = f.userData, a = t*u.sp + u.ph;
+      f.position.set(u.cx + Math.cos(a)*u.r, u.cy + Math.sin(t*.7+u.ph)*.6, u.cz + Math.sin(a)*u.r);
+      f.rotation.y = -a;
+      f.children.forEach(b=>{ const s = Math.sin(t*9 + b.userData.ph)*.7; b.userData.wl.rotation.z = s; b.userData.wr.rotation.z = -s });
+    });
+    const d = amb.dummy;
+    amb.parts.forEach(im=>{
+      const u = im.userData;
+      u.ps.forEach((p,n)=>{
+        p.y -= u.speed*dt;
+        if(p.y < u.floor) p.y = u.floor + u.height*(.8+Math.random()*.2);
+        d.position.set(p.x + Math.sin(t*1.4+p.ph)*u.sway, p.y, p.z + Math.cos(t*1.1+p.ph)*u.sway*.4);
+        d.rotation.set(t*p.rs+p.ph, t*p.rs*.6, Math.sin(t+p.ph)); d.updateMatrix();
+        im.setMatrixAt(n, d.matrix);
+      });
+      im.instanceMatrix.needsUpdate = true;
+    });
+    const v = amb.smokeAt;
+    amb.smoke.forEach(s=>{
+      s.userData.t += dt; const T = s.userData.t % 4.5, k = T/4.5;
+      s.position.set(v.x + Math.sin(s.userData.t*.9)*.4 + k*1.6, v.y + 6.7 + k*6.5, v.z + k*.6);
+      s.scale.setScalar(1.1 + k*4.2); s.material.opacity = Math.sin(k*Math.PI)*.55;
+    });
+    amb.mist.forEach((m,i)=>{ const s = 1 + Math.sin(t*3+i)*.12; m.scale.set(2.4*s, 1.6*s, 1) });
+  }
+
   function build(){
     scene.background = sky();
+    T3.lm = {};
     if(world){ scene.remove(world); world.traverse(o=>{ if(o.material && o.material.map) o.material.map.dispose() }) }
     world = new THREE.Group(); scene.add(world);
     batches = new Map(); treeRefs = []; batchMeshes = {};
@@ -1800,6 +1886,7 @@ const T3 = { ok:false };
     });
     // 不会动的东西冻结矩阵，每帧少算几百次
     world.traverse(o=>{ if(o!==world && !o.isSprite && !o.userData.spin && !o.userData.pulse && !o.userData.cloud && !o.userData.drift && !o.userData.blades && !o.userData.lava){ o.updateMatrix(); o.matrixAutoUpdate = false } });
+    ambient(world);
     T3.pos3 = pos3;
     hideLoader(); if(perf.first){ perf.first = false; perf.on = true }
     at = Math.min(pos, n-1);
@@ -1889,7 +1976,7 @@ const T3 = { ok:false };
     chest.visible = DAILY.unopened && DAILY.unopened.length>0 && !hops.length;
     if(chest.visible && !reduce && !chestAnim){ chest.position.y = (T3.pos3[at]?T3.pos3[at].base:0) + Math.abs(Math.sin(t*2.4))*.15 }
     world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4; if(o.userData.drift && !reduce) o.position.x = o.userData.x0 + Math.sin(t*.06+o.userData.ph)*4; if(o.userData.blades && !reduce) o.rotation.z = -t*.7; if(o.userData.lava) o.material.emissiveIntensity = .75 + Math.sin(t*2.4)*.3 });
-    stepWarp(dt); stepBattle(dt,t); stepCelebrate(dt); stepFx(dt); stepGear(dt,t); stepChest(dt);
+    stepWarp(dt); stepAmbient(dt,t); stepBattle(dt,t); stepCelebrate(dt); stepFx(dt); stepGear(dt,t); stepChest(dt);
     // 镜头跟着小 Clawd；进入关卡时拉近
     controls.target.lerp(camTarget, .06);
     if(zooming){ zooming.t=Math.min(1,zooming.t+dt*1.6); const d=zooming.from+((zooming.to||7)-zooming.from)*zooming.t; if(zooming.out && zooming.t>=1) zooming=null; v.copy(camera.position).sub(controls.target).setLength(d); camera.position.copy(controls.target).add(v) }
