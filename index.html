@@ -105,6 +105,21 @@ body.toy .toast{border-top-color:rgba(58,51,48,.12)}
 body.toy .toast.err{color:#c0392b}
 body.toy .setup input{background:#fff;color:#3a3330}
 body.toy .tag{background:rgba(255,255,255,.6)}
+/* 3D 战斗：战场就是 3D 场景，只留下底部对话框 */
+body.toy .scroller{pointer-events:none}
+body.toy .battle{background:transparent;pointer-events:none}
+body.toy .battle .side{pointer-events:auto}
+body.toy #arena{display:none}
+body.toy .battle.enter{filter:none;opacity:1}
+/* 3D 升级大字 */
+.lvl3d{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:pointer;background:radial-gradient(ellipse at center,rgba(255,240,210,.45),rgba(255,240,210,0) 62%)}
+.lvl3d b{font:400 clamp(44px,8vw,92px)/1 "ZCOOL KuaiLe","Noto Sans SC",sans-serif;color:#fff;-webkit-text-stroke:3px #d77a5c;text-shadow:0 6px 0 #b95e42,0 16px 34px rgba(120,60,30,.35);letter-spacing:.04em}
+.lvl3d span{font:600 clamp(16px,2.4vw,22px) "Noto Sans SC",sans-serif;color:#3a3330;background:rgba(255,255,255,.88);padding:6px 18px;border-radius:999px;box-shadow:0 6px 18px rgba(80,50,30,.15)}
+.lvl3d.show b{animation:lvlpop .9s cubic-bezier(.2,1.6,.4,1) both .25s}
+.lvl3d.show span{animation:lvlrise .6s ease both .85s}
+@keyframes lvlpop{from{transform:scale(.2) rotate(-8deg);opacity:0}to{transform:none;opacity:1}}
+@keyframes lvlrise{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.lvl3d.show b,.lvl3d.show span{animation:none}}
 /* 升级特效层 */
 #fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
 .toast.err{color:#ff9aa0}
@@ -197,6 +212,7 @@ details summary{cursor:pointer;color:var(--ink)}
     </aside>
     <canvas id="map3d" hidden aria-label="3D 浮空群岛：拖动旋转，点关卡台阶让小 Clawd 跳过去"></canvas>
     <div id="bubble3d" class="bubble3d" hidden></div>
+    <div id="lvl3d" class="lvl3d" hidden role="status"><b id="lvl3dTitle"></b><span id="lvl3dSub"></span></div>
     <div class="scroller" id="scroller">
     <canvas id="map" width="480" height="900" aria-label="关卡地图，第 1 关在最下面"></canvas>
     <section class="battle" id="battle" hidden>
@@ -1256,7 +1272,7 @@ function enterBattle(i,instant){
 }
 document.getElementById("back").addEventListener("click",()=>{
   battle.classList.add("enter");
-  setTimeout(()=>{ battle.hidden=true; battle.classList.remove("enter"); map.hidden=false; document.getElementById("stage").classList.remove("fighting"); if(window.T3 && T3.unzoom && STYLE==="toy") T3.unzoom(); nodes[pos] && follow(nodes[pos][1],false) },500);
+  setTimeout(()=>{ battle.hidden=true; battle.classList.remove("enter"); map.hidden=false; document.getElementById("stage").classList.remove("fighting"); if(window.T3 && T3.endBattle && STYLE==="toy") T3.endBattle(); nodes[pos] && follow(nodes[pos][1],false) },500);
 });
 
 // ---------- 关卡 ----------
@@ -1324,6 +1340,7 @@ function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;","
 
 document.getElementById("fight").addEventListener("click",()=>{
   if(!cur) return;
+  if(STYLE==="toy" && window.T3 && T3.attack){ T3.attack(); return }
   const target = cur.status==="cleared" ? 0 : cur.status==="todo" ? 1 : 0.5;
   if(cur.status==="cleared") monHp = 1;
   let f=0;
@@ -1376,6 +1393,7 @@ function render(){
 const fx = document.getElementById("fx"), fxc = fx.getContext("2d");
 let fxRun = 0;
 function levelUp(from, to){
+  if(STYLE==="toy" && window.T3 && T3.levelUp){ T3.levelUp(from,to,tierOf(to)>tierOf(from)); return }
   const oldT = tierOf(from), newT = tierOf(to), evolve = newT>oldT;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const dpr = Math.min(2, window.devicePixelRatio||1);
@@ -1612,8 +1630,8 @@ const T3 = { ok:false };
       // 关卡沿着弯曲的小路排开
       g.idx.forEach((i,j)=>{
         const x = ox + Math.sin(j*.9+k)*3.3, zz = oz - j*STEP3, h = .45 + j*.04;
-        pos3[i] = {x, z:zz, y:oy+.2+h, h, base:oy+.2};
-        if(i===0) T3.start = {x, z:zz};
+        pos3[i] = {x, z:zz, y:oy+.2+h, h, base:oy+.2, ox};
+        if(i===0) T3.origin = {x, z:zz};
       });
       // 树：避开小路
       const r = (a)=>hash(k*97+a, 13);
@@ -1621,9 +1639,9 @@ const T3 = { ok:false };
         const x = ox + (r(t*3)-.5)*10.6, zz = cz + (r(t*3+1)-.5)*(len-1.2);
         if(g.idx.some(i=>Math.hypot(pos3[i].x-x, pos3[i].z-zz) < 2.1)) continue;
         const s = .55 + r(t*3+2)*.4, leaf = r(t*7)>.5 ? z.tree[1] : z.tree[0];
-        world.add(box(.3*s,1*s,.3*s,"#a07350",x,oy+.2+.5*s,zz,.06));
-        world.add(box(1.25*s,.95*s,1.25*s,leaf,x,oy+.2+1.35*s,zz,.2));
-        world.add(box(.8*s,.6*s,.8*s,leaf,x,oy+.2+2.05*s,zz,.16));
+        const tg = new THREE.Group(); tg.userData.tree = {x, z:zz};
+        tg.add(box(.3*s,1*s,.3*s,"#a07350",x,oy+.2+.5*s,zz,.06), box(1.25*s,.95*s,1.25*s,leaf,x,oy+.2+1.35*s,zz,.2), box(.8*s,.6*s,.8*s,leaf,x,oy+.2+2.05*s,zz,.16));
+        world.add(tg);
       }
       // 区域名牌
       const sign = textSprite(z.name,{font:"600 40px 'ZCOOL KuaiLe','Noto Sans SC',sans-serif",bg:"rgba(122,75,42,.92)",fg:"#ffe9b8",scale:[5.6,1.4]});
@@ -1705,13 +1723,7 @@ const T3 = { ok:false };
     }
     hopTarget = to; hopT = 0;
   });
-  function zoomIn(i){
-    zooming = {t:0, from:camera.position.distanceTo(controls.target)}; // r128 的 OrbitControls 没有 getDistance()
-    setTimeout(()=>{
-      cv.classList.add("blur");
-      setTimeout(()=>{ cv.classList.remove("blur"); zooming=null; enterBattle(i,true) }, 700);
-    }, 450);
-  }
+  function zoomIn(i){ startBattle(i) }
   let zooming = null;
 
   // 对话气泡（HTML，跟着小 Clawd 的屏幕位置走）
@@ -1753,7 +1765,7 @@ const T3 = { ok:false };
       if(!reduce && !tired){ body.position.y=Math.sin(t*2.2)*.035; body.scale.set(1+Math.sin(t*2.2)*.012,1-Math.sin(t*2.2)*.018,1) }
       else { body.position.y = tired ? -.08 : 0; body.scale.set(1.02, tired ? .94 : 1, 1) }
       legs.forEach(l=>l.rotation.x*=.85);
-      let dr = -clawd.rotation.y + (reduce?0:Math.sin(t*.4)*.25); clawd.rotation.y += Math.atan2(Math.sin(dr),Math.cos(dr))*.02;
+      if(!fight && !celebrate){ let dr = -clawd.rotation.y + (reduce?0:Math.sin(t*.4)*.25); clawd.rotation.y += Math.atan2(Math.sin(dr),Math.cos(dr))*.02 }
     }
     eyes.forEach(e=>e.scale.y = DAILY.hungry ? .35 : 1);
     // 营火大小跟着连续学习天数
@@ -1763,9 +1775,11 @@ const T3 = { ok:false };
     chest.visible = DAILY.unopened && DAILY.unopened.length>0 && !hops.length;
     if(chest.visible && !reduce){ chest.position.y = (T3.pos3[at]?T3.pos3[at].base:0) + Math.abs(Math.sin(t*2.4))*.15 }
     world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4 });
+    stepBattle(dt,t); stepCelebrate(dt); stepFx(dt);
     // 镜头跟着小 Clawd；进入关卡时拉近
     controls.target.lerp(camTarget, .06);
     if(zooming){ zooming.t=Math.min(1,zooming.t+dt*1.6); const d=zooming.from+((zooming.to||7)-zooming.from)*zooming.t; if(zooming.out && zooming.t>=1) zooming=null; v.copy(camera.position).sub(controls.target).setLength(d); camera.position.copy(controls.target).add(v) }
+    if(battleCam) camera.position.lerp(battleCam, .07);
     sun.position.set(controls.target.x-8, controls.target.y+16, controls.target.z+10); sun.target.position.copy(controls.target);
     controls.update();
     renderer.render(scene, camera);
@@ -1783,6 +1797,162 @@ const T3 = { ok:false };
     }
   });
   T3.screenOf = i=>{ const p=T3.pos3&&T3.pos3[i]; if(!p) return null; v.set(p.x,p.y,p.z).project(camera); const r=cv.getBoundingClientRect(); return [r.left+(v.x*.5+.5)*r.width, r.top+(-v.y*.5+.5)*r.height] };
+
+  // ---------- 3D 战斗：怪物就站在关卡旁边的小平台上 ----------
+  const fx3 = [];                       // 粒子：小方块碎片
+  const shard = rbox(.16,.16,.16,.03);
+  function burst(x,y,z,colors,n=24,power=1){
+    for(let k=0;k<n;k++){
+      const m = new THREE.Mesh(shard, mat(colors[k%colors.length], {emissive:new THREE.Color(colors[k%colors.length]).convertSRGBToLinear(), emissiveIntensity:.25}));
+      m.position.set(x,y,z); m.castShadow = true;
+      const a = Math.random()*Math.PI*2, up = 2.5+Math.random()*3.5;
+      m.userData.v = new THREE.Vector3(Math.cos(a)*(1+Math.random()*2.5)*power, up*power, Math.sin(a)*(1+Math.random()*2.5)*power);
+      m.userData.spinV = new THREE.Vector3(Math.random()*8, Math.random()*8, 0);
+      m.userData.life = 1.6 + Math.random()*.8;
+      scene.add(m); fx3.push(m);
+    }
+  }
+  function floatText(text, x, y, z, color="#3a3330"){
+    const sp = textSprite(text, {font:"700 50px 'ZCOOL KuaiLe','Noto Sans SC',sans-serif", bg:"rgba(255,255,255,.95)", fg:color, scale:[3.4,.85]});
+    sp.position.set(x,y,z); sp.userData.rise = 1.8; scene.add(sp); fx3.push(sp);
+  }
+  const MON3 = {cleared:"#9aa3b8", shaky:"#e8b63e", unrec:"#6fa8e0", todo:"#9b6be0"};
+  let fight = null;    // 当前战斗：{i, mon, plat, hp, hpTo, anim}
+  let battleCam = null; // 战斗时镜头的位置：从侧面看小 Clawd 和怪物
+  // 战斗时藏起关卡名，以及挡在镜头和战场之间的树
+  const labels = (on,p)=>{ if(world) world.traverse(o=>{ if(o.isSprite) o.visible = on; const t=o.userData.tree; if(t) o.visible = on || !(t.z > p.z-1.5 && t.z < p.z+10 && Math.abs(t.x-p.x) < 5.5) }) };
+  function makeMonster(color){
+    const g = new THREE.Group(), b = new THREE.Group(); g.add(b);
+    const bodyM = mat(color, {emissive:new THREE.Color("#ffffff"), emissiveIntensity:0});
+    const bodyMat = bodyM.clone(); // 单独一份，被打中时只让它发白
+    const shell = new THREE.Mesh(rbox(1.5,1.15,1.3,.45), bodyMat); shell.position.y=.6; shell.castShadow=true; b.add(shell);
+    [-.33,.33].forEach(x=>{
+      const w=new THREE.Mesh(rbox(.34,.4,.1,.12),mat("#ffffff",{roughness:.5})); w.position.set(x,.78,.64); b.add(w);
+      const p=new THREE.Mesh(rbox(.16,.22,.06,.06),mat("#1d1a1a",{roughness:.4})); p.position.set(x-.03,.74,.7); b.add(p);
+    });
+    const mouth=new THREE.Mesh(rbox(.36,.08,.06,.03),mat("#1d1a1a")); mouth.position.set(0,.45,.66); b.add(mouth);
+    // 血条：两根细条，总是朝向镜头
+    const bar = new THREE.Group(); bar.position.y = 1.75; g.add(bar);
+    const bg = new THREE.Mesh(rbox(1.5,.16,.08,.06), mat("#3a3330",{transparent:true,opacity:.35})); bar.add(bg);
+    const fill = new THREE.Mesh(rbox(1.42,.1,.1,.04), mat("#ff5a5f",{emissive:new THREE.Color("#ff5a5f").convertSRGBToLinear(),emissiveIntensity:.3})); fill.position.z=.02; bar.add(fill);
+    g.userData = {body:b, bodyMat, bar, fill};
+    return g;
+  }
+  function startBattle(i){
+    endBattle(true);
+    const p = T3.pos3[i], s = data.stages[i]; if(!p) return;
+    const side = p.x < p.ox ? 1 : -1;     // 怪物站在离岛中心更近的一侧
+    const plat = box(2.1,.35,2.1,"#efe6da",p.x+side*2.6,p.base+.35,p.z-.2,.15); scene.add(plat);
+    const mon = makeMonster(MON3[s.status]); mon.position.set(p.x+side*2.6, p.base+.53, p.z-.2);
+    mon.rotation.y = side>0 ? -Math.PI/2.4 : Math.PI/2.4; scene.add(mon);
+    const hp = s.status==="cleared" ? 0 : s.status==="todo" ? 1 : .5;
+    mon.visible = hp>0; mon.userData.fill.scale.x = Math.max(.001,hp);
+    fight = {i, mon, plat, side, hp, hpTo:hp, anim:null, home:clawd.position.clone()};
+    clawd.rotation.y = side>0 ? Math.PI/2.2 : -Math.PI/2.2;
+    camTarget.set(p.x+side*1.3, p.y+.4, p.z);
+    zooming = null; battleCam = new THREE.Vector3(p.x+side*1.3, p.y+3.8, p.z+9.6); labels(false,p);
+    setTimeout(()=>enterBattle(i,true), 650);
+  }
+  function endBattle(silent){
+    if(!fight) return;
+    scene.remove(fight.mon, fight.plat); fight = null; battleCam = null; labels(true,{});
+    const p = T3.pos3[at]; if(p) camTarget.set(p.x,p.y,p.z);
+    if(!silent) T3.unzoom();
+  }
+  // 出击：冲过去 → 击中（发白、压扁、碎片）→ 退回 → 结果
+  function attack(){
+    if(!fight || fight.anim) return;
+    const s = data.stages[fight.i];
+    if(s.status==="cleared"){ fight.hp = 1; fight.hpTo = 1; fight.mon.visible = true; fight.mon.scale.setScalar(1); fight.mon.userData.fill.scale.x = 1 }
+    fight.anim = {t:0, hit:false, done:false, result:s.status};
+  }
+  function stepBattle(dt, t){
+    if(!fight) return;
+    const {mon, side} = fight, ud = mon.userData;
+    ud.bar.quaternion.copy(camera.quaternion);
+    // 待机：怪物呼吸
+    if(mon.visible && !(fight.anim && fight.anim.t<.6)){ ud.body.scale.set(1+Math.sin(t*3)*.04, 1-Math.sin(t*3)*.05, 1+Math.sin(t*3)*.04) }
+    fight.hp += (fight.hpTo-fight.hp)*Math.min(1,dt*6); ud.fill.scale.x = Math.max(.001,fight.hp); ud.fill.position.x = -(1-fight.hp)*.71;
+    const A = fight.anim; if(!A) return;
+    A.t += dt;
+    const home = fight.home, reach = side*1.55;
+    if(A.t<.32){ const k=A.t/.32; clawd.position.x = home.x + reach*k*k; clawd.position.y = home.y + Math.sin(Math.PI*k)*.5 }
+    else if(A.t<.62){ const k=(A.t-.32)/.3; clawd.position.x = home.x + reach*(1-k); clawd.position.y = home.y }
+    else clawd.position.copy(home);
+    if(!A.hit && A.t>=.32){
+      A.hit = true;
+      ud.bodyMat.emissiveIntensity = .9;
+      ud.body.scale.set(1.25,.7,1.25);
+      burst(mon.position.x-side*.4, mon.position.y+.8, mon.position.z, ["#ffffff","#ffe08a","#d77a5c"], 18, .7);
+      fight.hpTo = A.result==="cleared" ? 0 : A.result==="todo" ? 1 : .5;
+    }
+    if(A.hit) ud.bodyMat.emissiveIntensity *= .88;
+    if(A.t>.32 && A.t<.6) mon.position.x += Math.sin(A.t*90)*.03;
+    if(!A.done && A.t>=.95){
+      A.done = true;
+      const top = mon.position.y + 2.6;
+      if(A.result==="cleared"){
+        burst(mon.position.x, mon.position.y+.6, mon.position.z, ["#8fcf9a","#ffd66b","#ffffff","#9cc6ef","#ff9f6b"], 46, 1.1);
+        mon.visible = false;
+        floatText("通关！", mon.position.x, top, mon.position.z, "#2f9a58");
+      } else if(A.result==="todo"){
+        ud.body.scale.set(.85,1.25,.85);
+        floatText("先去学习卡完成这一关", mon.position.x, top, mon.position.z, "#7b4fc0");
+      } else {
+        floatText(A.result==="unrec" ? "没有记录，找 02 老师复测" : "抖点还在！复习后再来", mon.position.x, top, mon.position.z, "#b9790c");
+      }
+    }
+    if(A.t>1.6) fight.anim = null;
+  }
+
+  // ---------- 3D 升级特效 ----------
+  const lvlEl = document.getElementById("lvl3d");
+  let celebrate = null;
+  function levelUp3D(from, to, evolve){
+    const p = clawd.position;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1,.08,8,48), new THREE.MeshBasicMaterial({color:"#ffd66b", transparent:true}));
+    ring.rotation.x = Math.PI/2; ring.position.set(p.x, p.y+.1, p.z); scene.add(ring);
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.9,.9,14,32,1,true), new THREE.MeshBasicMaterial({color:"#ffe9a8", transparent:true, opacity:.0, side:THREE.DoubleSide, depthWrite:false}));
+    beam.position.set(p.x, p.y+7, p.z); scene.add(beam);
+    celebrate = {t:0, ring, beam, evolve, spun:0, base:p.y}; labels(false,{x:p.x,z:p.z});
+    camTarget.copy(p); zooming = {t:0, from:camera.position.distanceTo(controls.target), to:9};
+    setTimeout(()=>burst(p.x,p.y+1,p.z,["#ffd66b","#ff9f6b","#8fcf9a","#9cc6ef","#ffffff","#d77a5c"], evolve?110:70, 1.3), evolve?1300:350);
+    document.getElementById("lvl3dTitle").textContent = evolve ? "EVOLUTION!" : "LEVEL UP!";
+    document.getElementById("lvl3dSub").textContent = evolve ? `${FORMS[tierOf(from)].name} → ${FORMS[tierOf(to)].name}` : `Lv.${from} → Lv.${to}`;
+    lvlEl.classList.remove("show"); void lvlEl.offsetWidth; lvlEl.hidden = false; lvlEl.classList.add("show");
+    clearTimeout(levelUp3D.timer); levelUp3D.timer = setTimeout(()=>{ lvlEl.hidden = true; T3.unzoom() }, evolve?4200:3200);
+  }
+  if(lvlEl) lvlEl.addEventListener("click",()=>{ lvlEl.hidden = true });
+  function stepCelebrate(dt){
+    if(!celebrate) return;
+    const c = celebrate; c.t += dt;
+    const jumpStart = c.evolve ? 1.2 : .1;
+    c.ring.scale.setScalar(1+c.t*4); c.ring.material.opacity = Math.max(0,1-c.t/1.4);
+    c.beam.material.opacity = Math.max(0, Math.min(.35, c.t*.8) - Math.max(0,c.t-1.8)*.3);
+    if(c.evolve && c.t<1.3){ // 进化：越闪越快
+      const on = Math.floor(c.t*(5+c.t*14))%2===0;
+      body.children.forEach(m=>{ if(m.material && m.material.emissive){ m.material.emissive.set(on?"#ffffff":"#000000"); m.material.emissiveIntensity = on?.6:0 } });
+    } else if(c.evolve) body.children.forEach(m=>{ if(m.material && m.material.emissive) m.material.emissiveIntensity = 0 });
+    if(c.t>jumpStart && c.t<jumpStart+.9){
+      const k=(c.t-jumpStart)/.9;
+      clawd.position.y = c.base + Math.sin(Math.PI*k)*2.2;
+      clawd.rotation.y += dt*Math.PI*2/.9*2;
+    }
+    if(c.t>4.5){ scene.remove(c.ring, c.beam); clawd.position.y = c.base; celebrate = null; if(!fight) labels(true,{}) }
+  }
+  function stepFx(dt){
+    for(let k=fx3.length-1;k>=0;k--){
+      const m = fx3[k], u = m.userData;
+      if(u.rise){ m.position.y += dt*1.1; u.rise -= dt; m.material.opacity = Math.min(1,u.rise); if(u.rise<=0){ scene.remove(m); fx3.splice(k,1) } continue }
+      u.v.y -= 9.8*dt; m.position.addScaledVector(u.v, dt);
+      m.rotation.x += u.spinV.x*dt; m.rotation.y += u.spinV.y*dt;
+      if(m.position.y < -6) u.life = 0;
+      u.life -= dt; if(u.life<=0){ scene.remove(m); fx3.splice(k,1) }
+    }
+  }
+
+  T3.debug = ()=>({dist:camera.position.distanceTo(controls.target), target:controls.target.toArray().map(v=>+v.toFixed(2)), cam:camera.position.toArray().map(v=>+v.toFixed(2)), zooming, fight:!!fight});
+  T3.start = startBattle; T3.attack = attack; T3.endBattle = ()=>endBattle(false); T3.levelUp = levelUp3D;
   T3.unzoom = ()=>{ zooming = {t:0, from:camera.position.distanceTo(controls.target), to:16, out:true} };
   T3.ok = true;
   T3.rebuild = ()=>{ if(data){ resize(); build() } };
