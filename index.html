@@ -557,8 +557,10 @@ function computeDaily(){
   d.fire = Math.max(0, lv-(d.warn?1:0));
   // 每个学习日一个宝箱：掉落由日期决定，换电脑也一样；已有的不会重复掉
   const pools=[0,1,2].map(r=>LOOT.filter(o=>o.r===r));
+  d.welcome = new Set();
+  days.forEach((day,i)=>{ if(i && Math.round((new Date(day+"T12:00:00")-new Date(days[i-1]+"T12:00:00"))/864e5) >= 5) d.welcome.add(day) });
   for(const day of days){
-    const v=strHash(day+"#r"), r = v<.1?2:v<.4?1:0;
+    const v=strHash(day+"#r"), r = d.welcome.has(day) ? (v<.3?2:1) : v<.1?2:v<.4?1:0;
     let pool=pools[r].filter(o=>!d.owned.has(o.id));
     if(!pool.length) pool=pools.flat().filter(o=>!d.owned.has(o.id));
     if(!pool.length){ d.loot[day]=null; continue }
@@ -570,7 +572,10 @@ function computeDaily(){
   const last = days[days.length-1];
   d.since = last ? Math.round((new Date(today+"T12:00:00")-new Date(last+"T12:00:00"))/864e5) : 99;
   d.studiedToday = d.since===0;
-  d.hungry = d.ready && d.since>=2;
+  d.hp = computeHp(data).hp;
+  d.fainted = d.ready && d.hp <= 0;                                  // 血量清空：晕倒
+  d.sleeping = d.ready && d.since >= 5;                              // 5 天没学：睡着
+  d.hungry = d.ready && d.since >= 2 && d.since < 5;
   let step = (data.today||"").split("。")[0].replace(/（[^）]*）/g,"").replace(/^先做/,"").trim();
   if(step.length>22) step = step.slice(0,21)+"…";
   d.step = step || "打开学习卡，看看今天学什么";
@@ -626,7 +631,9 @@ function drawChest(x,y){
 function drawBubble(x,y){
   if(!data) return;
   let msg;
-  if(!DAILY.ready) msg = "更新 Apps Script 后，我就能看到你每天的学习记录";
+  if(DAILY.fainted) msg = "我晕倒了…做一次到期复习，就能把我救起来";
+  else if(DAILY.sleeping) msg = "Zzz…回来学一次就能叫醒我，还有欢迎回来宝箱";
+  else if(!DAILY.ready) msg = "更新 Apps Script 后，我就能看到你每天的学习记录";
   else if(DAILY.studiedToday) msg = `今天学过啦！营火连续 ${DAILY.streak} 天`;
   else if(DAILY.hungry) msg = `好饿…先做：${DAILY.step}`;
   else if(DAILY.warn) msg = `营火快灭了！先做：${DAILY.step}`;
@@ -662,7 +669,7 @@ function openChest(){
   // 3D 画风：在独立的 3D 小舞台里开宝箱
   if(STYLE==="toy" && window.T3 && T3.loot3d){
     const box = document.getElementById("loot"), eq = document.getElementById("lootEquip"), nm = document.getElementById("lootName");
-    document.getElementById("lootDay").textContent = `${day} 的学习奖励`;
+    document.getElementById("lootDay").textContent = (DAILY.welcome && DAILY.welcome.has(day) ? `欢迎回来！${day} 的特别宝箱` : `${day} 的学习奖励`);
     nm.textContent = ""; document.getElementById("lootMeta").textContent = ""; eq.hidden = true;
     document.getElementById("lootCv").hidden = true; document.getElementById("loot3d").hidden = false; box.hidden = false;
     T3.loot3d(o, ()=>{
@@ -677,7 +684,7 @@ function openChest(){
   const box = document.getElementById("loot");
   const cv = document.getElementById("lootCv"), c = cv.getContext("2d");
   cv.width = Math.round(240*DPR()); cv.height = Math.round(170*DPR()); c.setTransform(DPR(),0,0,DPR(),0,0);
-  document.getElementById("lootDay").textContent = `${day} 的学习奖励`;
+  document.getElementById("lootDay").textContent = (DAILY.welcome && DAILY.welcome.has(day) ? `欢迎回来！${day} 的特别宝箱` : `${day} 的学习奖励`);
   document.getElementById("lootName").textContent = "";
   document.getElementById("lootMeta").textContent = "";
   const eq = document.getElementById("lootEquip"); eq.hidden = true;
@@ -742,8 +749,8 @@ function updateDaily(){
   const st = document.getElementById("streak"), md = document.getElementById("mood"), cb = document.getElementById("chestBtn");
   if(!DAILY.ready){ st.textContent="🔥 —"; md.textContent="需要更新 Apps Script"; cb.hidden=true; return }
   st.textContent = `🔥 连续 ${DAILY.streak} 天`;
-  md.textContent = DAILY.studiedToday ? "精神满满" : DAILY.hungry ? `饿了 ${DAILY.since} 天` : DAILY.warn ? "营火快灭了" : "等你开工";
-  md.className = "chip " + (DAILY.studiedToday ? "g" : (DAILY.hungry||DAILY.warn) ? "r" : "");
+  md.textContent = DAILY.fainted ? "晕倒了" : DAILY.sleeping ? "睡着了" : DAILY.studiedToday ? "精神满满" : DAILY.hungry ? `饿了 ${DAILY.since} 天` : DAILY.warn ? "营火快灭了" : "等你开工";
+  md.className = "chip " + ((DAILY.fainted||DAILY.sleeping) ? "r" : DAILY.studiedToday ? "g" : (DAILY.hungry||DAILY.warn) ? "r" : "");
   cb.hidden = !DAILY.unopened.length;
   document.getElementById("chestN").textContent = DAILY.unopened.length;
   renderBag();
@@ -1920,6 +1927,8 @@ const T3 = { ok:false };
   // 对话气泡（HTML，跟着小 Clawd 的屏幕位置走）
   const bubble = document.getElementById("bubble3d");
   function bubbleText(){
+    if(DAILY.fainted) return "我晕倒了…做一次到期复习，就能把我救起来";
+    if(DAILY.sleeping) return "Zzz…回来学一次就能叫醒我，还有欢迎回来宝箱";
     if(!DAILY.ready) return "更新 Apps Script 后，我就能看到你每天的学习记录";
     if(DAILY.studiedToday) return `今天学过啦！营火连续 ${DAILY.streak} 天`;
     if(DAILY.hungry) return `好饿…先做：${DAILY.step}`;
@@ -1968,7 +1977,7 @@ const T3 = { ok:false };
       legs.forEach(l=>l.rotation.x*=.85);
       if(!fight && !celebrate){ let dr = -clawd.rotation.y + (reduce?0:Math.sin(t*.4)*.25); clawd.rotation.y += Math.atan2(Math.sin(dr),Math.cos(dr))*.02 }
     }
-    stepFace(dt);
+    stepFace(dt); stepState(dt, t);
     if(STYLE==="toy" && T3.portrait) T3.portrait(document.getElementById("face"));
     // 营火大小跟着连续学习天数
     const lv = DAILY.fire||0;
@@ -2051,6 +2060,9 @@ const T3 = { ok:false };
     return g;
   }
   function startBattle(i){
+    if(DAILY.fainted && data.stages[i] && data.stages[i].status!=="cleared"){
+      const p = clawd.position; floatText("先做一次到期复习，把我救起来", p.x, p.y+2.8, p.z, "#c0392b"); return;
+    }
     endBattle(true);
     const p = T3.pos3[i], s = data.stages[i]; if(!p) return;
     const side = p.x < p.ox ? 1 : -1;     // 怪物站在离岛中心更近的一侧
@@ -2190,7 +2202,7 @@ const T3 = { ok:false };
   const centered = (rows,u,depth)=>{ const g=voxels(rows,u,depth), w=Math.max(...rows.map(r=>r.length))*u, h=rows.length*u; g.position.set(-w/2+u/2, h-u/2, 0); const o=new THREE.Group(); o.add(g); o.userData.size=[w,h]; return o };
   let lastLook = "", aura = null, rainbow = false;
   function dress(){
-    const sig = JSON.stringify([LOOK, tier]);
+    const sig = JSON.stringify([LOOK, tier, !!DAILY.fainted]);
     if(sig===lastLook) return; lastLook = sig;
     gear.clear(); petG.clear(); aura = null;
     // 颜色
@@ -2198,6 +2210,7 @@ const T3 = { ok:false };
     rainbow = !!(col && col.c==="rainbow");
     if(col && !rainbow){ skin.color = lin(col.c[0]); skinDark.color = lin(col.c[1]) }
     else if(!col){ skin.color = lin(CL); skinDark.color = lin("#c4664a") }
+    if(DAILY.fainted){ skin.color = lin("#aaa6a2"); skinDark.color = lin("#8f8b87") }      // 晕倒时变灰
     // 头上：装备了帽子就戴帽子，否则按形态戴头巾 / 头盔 / 王冠
     if(LOOK.hat && byId[LOOK.hat]){
       const h = byId[LOOK.hat], g = voxels(h.px, U, 1.04, 0, h.j0, true);
@@ -2454,7 +2467,7 @@ const T3 = { ok:false };
     g.visible = k==="calm"; body.add(g); mouthG[k] = g;
   });
   let nextBlink = 2, blinkT = 0;
-  const mood = ()=> DAILY.hungry ? "sad" : DAILY.studiedToday ? "happy" : "calm";
+  const mood = ()=> (DAILY.fainted || DAILY.hungry) ? "sad" : DAILY.studiedToday ? "happy" : "calm";
   function stepFace(dt){
     const m = mood();
     Object.entries(mouthG).forEach(([k,g])=>g.visible = k===m);
@@ -2462,14 +2475,14 @@ const T3 = { ok:false };
     nextBlink -= dt;
     if(nextBlink < 0){ blinkT = .14; nextBlink = 2 + Math.random()*3 }
     if(blinkT > 0) blinkT -= dt;
-    const open = DAILY.hungry ? .35 : 1;
+    const open = (DAILY.fainted || DAILY.sleeping) ? .08 : DAILY.hungry ? .35 : 1;
     eyes.forEach(e=>e.scale.y = blinkT > 0 ? .1 : open);
-    shine.forEach(s=>s.visible = blinkT <= 0 && !DAILY.hungry);
+    shine.forEach(s=>s.visible = blinkT <= 0 && !DAILY.hungry && !DAILY.fainted && !DAILY.sleeping);
   }
   // 左上角头像：用 3D 小舞台给当前的小 Clawd 拍一张大头照
   let lastPortrait = "";
   T3.portrait = (canvas, force)=>{
-    const sig = JSON.stringify([LOOK, tier, mood()]);
+    const sig = JSON.stringify([LOOK, tier, mood(), !!DAILY.fainted, !!DAILY.sleeping]);
     if(!force && sig===lastPortrait) return; lastPortrait = sig;
     if(!TH) T3.thumb(LOOT[0]);                          // 借用缩略图的舞台
     const c = clawd.clone(true); c.position.set(0,0,0); c.rotation.set(0,.42,0); c.visible = true;
@@ -2481,6 +2494,28 @@ const T3 = { ok:false };
     g.drawImage(TH.r.domElement, 16, 0, 160, 160, 0, 0, canvas.width, canvas.height);
     TH.sc.remove(c); TH.ped.visible = true; TH.cam.position.copy(camPos); TH.cam.lookAt(0,.9,0);
   };
+
+
+  // ---------- 晕倒和睡着 ----------
+  // 晕倒：血量 ≤ 0，躺倒、变灰、头上转星星，不能打新关卡；做一次到期复习回血就会爬起来
+  // 睡着：5 天没学，缩成一团、头上冒 Z；回来学一次就醒，还会拿到欢迎回来宝箱
+  const stars = new THREE.Group(); stars.visible = false; clawd.add(stars);
+  [0,1,2].forEach(i=>{ const s = box(.17,.17,.17,"#ffd66b",0,0,0,.04); s.userData.i = i; stars.add(s) });
+  const zzz = [0,1,2].map(i=>{ const s = textSprite("Z",{w:128,h:128,font:"700 96px 'ZCOOL KuaiLe','Noto Sans SC',sans-serif",bg:null,fg:"#7d8597",scale:[.6,.6]}); s.visible = false; s.userData.ph = i/3; clawd.add(s); return s });
+  let faintK = 0;
+  function stepState(dt, t){
+    const faint = !!DAILY.fainted, sleep = !faint && !!DAILY.sleeping;
+    faintK += ((faint ? 1 : 0) - faintK) * Math.min(1, dt*3);
+    if(faintK > .01){ body.rotation.z = faintK*1.4; body.position.x = faintK*.45; body.position.y = -faintK*.35 }
+    else if(body.rotation.z){ body.rotation.z = 0; body.position.x = 0 }
+    stars.visible = faint;
+    if(faint){ stars.position.set(.9, 1.15, 0); stars.children.forEach(s=>{ const a = t*3 + s.userData.i*2.09; s.position.set(Math.cos(a)*.55, Math.sin(t*4+s.userData.i)*.08, Math.sin(a)*.55); s.rotation.y = t*4 }) }
+    zzz.forEach(z=>{
+      z.visible = sleep;
+      if(sleep && !reduce){ const k = (t*.35 + z.userData.ph) % 1; z.position.set(.55 + k*.7, 1.5 + k*1.5, .2); z.material.opacity = Math.sin(k*Math.PI); z.scale.setScalar(.35 + k*.55) }
+    });
+    if(sleep) body.scale.set(1.05, .88, 1.05);
+  }
 
   T3.debug = ()=>({dist:camera.position.distanceTo(controls.target), target:controls.target.toArray().map(v=>+v.toFixed(2)), cam:camera.position.toArray().map(v=>+v.toFixed(2)), zooming, fight:!!fight});
   T3.start = startBattle; T3.attack = attack; T3.endBattle = ()=>endBattle(false); T3.levelUp = levelUp3D;
