@@ -80,7 +80,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
 .battle:not([hidden]) ~ .legend, .stage.fighting .legend{display:none}
 [hidden]{display:none!important}
 canvas{display:block;image-rendering:pixelated;max-width:100%}
-#map{width:100%;margin:0;height:auto;cursor:pointer;transition:filter .9s ease,opacity .9s ease,transform .9s ease}
+#map{width:100%;margin:0 auto;height:auto;cursor:pointer;transition:filter .9s ease,opacity .9s ease,transform .9s ease}
 #map.blur{filter:blur(14px) brightness(.6);transform:scale(1.06);opacity:.4}
 .note{font-size:13px;color:var(--dim);margin:0}
 .status{padding:10px 14px;border:3px dashed var(--line);font-size:14px}
@@ -561,6 +561,7 @@ function openChest(){
   const o = byId[DAILY.loot[day]];
   const box = document.getElementById("loot");
   const cv = document.getElementById("lootCv"), c = cv.getContext("2d");
+  cv.width = Math.round(240*DPR()); cv.height = Math.round(170*DPR()); c.setTransform(DPR(),0,0,DPR(),0,0);
   document.getElementById("lootDay").textContent = `${day} 的学习奖励`;
   document.getElementById("lootName").textContent = "";
   document.getElementById("lootMeta").textContent = "";
@@ -569,8 +570,8 @@ function openChest(){
   const t0 = performance.now(), reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   (function anim(now){
     const t = reduce ? 2 : (now-t0)/1000;
-    c.clearRect(0,0,cv.width,cv.height); c.imageSmoothingEnabled=false;
-    const cx=cv.width/2, cy=cv.height/2;
+    c.clearRect(0,0,240,170); c.imageSmoothingEnabled=false;
+    const cx=120, cy=85;
     if(t<1.1){ // 宝箱越抖越厉害
       const sh = Math.sin(t*40)*t*5;
       c.fillStyle="#7a4b2a"; c.fillRect(cx-36+sh,cy-6,72,40); c.fillStyle="#9a6236"; c.fillRect(cx-36+sh,cy-30,72,26);
@@ -581,9 +582,9 @@ function openChest(){
       c.save(); c.translate(cx,cy); c.rotate(t*.7);
       for(let i=0;i<12;i++){ c.rotate(Math.PI/6); c.fillStyle=`${col}${o.r>=2?"55":"33"}`; c.beginPath(); c.moveTo(0,0); c.lineTo(-10,-200); c.lineTo(10,-200); c.fill() }
       c.restore();
-      if(t<1.4){ c.fillStyle=`rgba(255,255,255,${1-(t-1.1)/.3})`; c.fillRect(0,0,cv.width,cv.height) }
-      const off = document.createElement("canvas"); off.width=120; off.height=96;
-      itemPreview(off.getContext("2d"),o,120,96,now/16);
+      if(t<1.4){ c.fillStyle=`rgba(255,255,255,${1-(t-1.1)/.3})`; c.fillRect(0,0,240,170) }
+      const off = document.createElement("canvas"); off.width=240; off.height=192;
+      itemPreview(off.getContext("2d"),o,240,192,now/16);
       const sz = 120*(0.6+0.4*k);
       c.drawImage(off,cx-sz/2,cy-sz*0.4,sz,sz*0.8);
       if(!document.getElementById("lootName").textContent){
@@ -613,8 +614,8 @@ function renderBag(){
     const b = document.createElement("button"); b.type="button"; b.className="slot"+(has?"":" lock")+(on?" on":"");
     b.style.borderColor = has ? RARITY[o.r].c : "";
     b.title = has ? `${o.name}（${RARITY[o.r].n}${KIND[o.kind]}）· 来自 ${owned.get(o.id)}` : (o.ms ? `连续学习 ${o.ms} 天解锁` : "开宝箱获得");
-    const cv = document.createElement("canvas"); cv.width=48; cv.height=40;
-    if(has) itemPreview(cv.getContext("2d"),o,48,40);
+    const cv = document.createElement("canvas"); cv.width=96; cv.height=80;
+    if(has) itemPreview(cv.getContext("2d"),o,96,80);
     const cap = document.createElement("span"); cap.textContent = has ? o.name : (o.ms ? `🔥${o.ms}天` : "？");
     b.append(cv,cap);
     if(has && o.kind!=="camp") b.onclick=()=>equip(o.id);
@@ -633,15 +634,23 @@ function updateDaily(){
   renderBag();
 }
 
-function drawFace(){ const fc=document.getElementById("face").getContext("2d"); fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, frame) }
+function drawFace(){ const fe=document.getElementById("face"), k=Math.max(1,Math.round(36*DPR()))/48; fe.width=fe.height=Math.round(48*k); const fc=fe.getContext("2d"); fc.setTransform(k,0,0,k,0,0); fc.imageSmoothingEnabled=false; fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, frame) }
 
 // ---------- 地图 ----------
 const map = document.getElementById("map"), mx = map.getContext("2d");
 let W = map.width; const T = 8;
 // 画布逻辑宽度 = 游戏区宽度 ÷ 放大倍数，宽屏时两侧自然延伸出更多陆地和海
-function fitWidth(){ const cw = document.getElementById("stage").clientWidth || 480; const sc = Math.min(2, Math.max(1, cw/480)); return Math.max(480, Math.round(cw/sc/T)*T) }
+let ZOOM = 1, MH = 0; // ZOOM：每个逻辑像素占几个屏幕像素；MH：地图逻辑高度
+const DPR = () => window.devicePixelRatio || 1;
+function fitWidth(){
+  const cw = document.getElementById("stage").clientWidth || 480, dev = cw*DPR();
+  // 屏幕上的大小和以前一样（每个逻辑像素 1～2 个 CSS 像素），再取整到屏幕真实像素的整数倍
+  const css = Math.min(2, Math.max(1, cw/480));
+  ZOOM = Math.max(1, Math.min(6, Math.round(css*DPR())));
+  return Math.max(440, Math.floor(dev/ZOOM/T)*T);
+}
 let resizeT = 0;
-addEventListener("resize",()=>{ clearTimeout(resizeT); resizeT = setTimeout(()=>{ if(fitWidth()!==W){ terrain = null } },200) });
+addEventListener("resize",()=>{ clearTimeout(resizeT); resizeT = setTimeout(()=>{ const z=ZOOM; if(fitWidth()!==W || ZOOM!==z){ terrain = null } },200) });
 let data = null, pos = 0, walking = false, frame = 0, clawdXY = null, legPhase = 0;
 let nodes = [], curves = [], terrain = null, tier = 0, landGrid = [];
 try{ pos = +localStorage.getItem("clawd-pos")||0 }catch(e){}
@@ -818,12 +827,16 @@ function drawNode(i,x,y,s,isToday){
 function drawMap(){
   const n = data ? data.stages.length : 12;
   if(!terrain || nodes.length!==n){
-    W = fitWidth(); map.width = W;
-    const H = layout(n); map.height = H; computeZoneStarts(); terrain = buildTerrain(H);
+    W = fitWidth();
+    const H = layout(n); MH = H;
+    if(H*ZOOM > 32000) ZOOM = Math.max(1, Math.floor(32000/H)); // 浏览器画布高度上限
+    map.width = W*ZOOM; map.height = H*ZOOM; map.style.width = (W*ZOOM/DPR())+"px";
+    computeZoneStarts(); terrain = buildTerrain(H);
   }
-  const sc = map.height/(map.clientHeight||map.height);
+  mx.setTransform(ZOOM,0,0,ZOOM,0,0); mx.imageSmoothingEnabled = false;
+  const sc = MH/(map.clientHeight||MH);
   const vy0 = Math.max(0, Math.floor((stageEl.scrollTop-map.offsetTop)*sc) - 80);
-  const vh = Math.min(map.height-vy0, Math.ceil(stageEl.clientHeight*sc) + 160);
+  const vh = Math.min(MH-vy0, Math.ceil(stageEl.clientHeight*sc) + 160);
   if(vh>0) mx.drawImage(terrain,0,vy0,W,vh,0,vy0,W,vh);
   // 海浪闪光
   for(let k=0;k<40;k++){
@@ -867,7 +880,7 @@ document.getElementById("rulesBtn").addEventListener("click",e=>{
 });
 function follow(y, smooth){
   const r = map.getBoundingClientRect(); if(!r.height) return;
-  const target = map.offsetTop + y*(r.height/map.height) - stageEl.clientHeight/2;
+  const target = map.offsetTop + y*(r.height/MH) - stageEl.clientHeight/2;
   stageEl.style.scrollBehavior = smooth ? "smooth" : "auto";
   stageEl.scrollTop = Math.max(0,target);
 }
@@ -895,7 +908,7 @@ function walkTo(target, done){
 
 map.addEventListener("click",e=>{
   if(!data||walking) return;
-  const r = map.getBoundingClientRect(), sx = map.width/r.width, sy = map.height/r.height;
+  const r = map.getBoundingClientRect(), sx = W/r.width, sy = MH/r.height;
   const x=(e.clientX-r.left)*sx, y=(e.clientY-r.top)*sy;
   if(chestBox && x>=chestBox[0] && x<=chestBox[2] && y>=chestBox[1] && y<=chestBox[3]){ openChest(); return }
   let best=-1, bd=1e9;
@@ -940,6 +953,9 @@ let cur = null, monHp = 1, af = 0;
 const AW=320, GROUND=108;
 function drawArena(shake=0, flash=false, clawdX=60){
   af++;
+  const ar = arena.getBoundingClientRect(), az = Math.max(1, Math.ceil(Math.max(ar.width/AW, ar.height/180)*DPR()));
+  if(arena.width !== AW*az){ arena.width = AW*az; arena.height = 180*az }
+  ax.setTransform(az,0,0,az,0,0); ax.imageSmoothingEnabled = false;
   const z = cur ? ZONES[cur.zone||0] : ZONES[0];
   const g=ax.createLinearGradient(0,0,0,GROUND); g.addColorStop(0,"#141b36"); g.addColorStop(1,"#3a4f7c");
   ax.fillStyle=g; ax.fillRect(0,0,AW,GROUND);
