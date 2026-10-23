@@ -12,7 +12,9 @@ const KEEP_WORDS = ["已知抖点：", "抽点记录：", "SE-07 综合项目核
 function doGet() {
   const text = DocumentApp.openById(DOC_ID).getBody().getText();
   const lines = text.split("\n").map(s => s.trim()).filter(l =>
-    KEEP_PREFIX.some(p => l.startsWith(p)) || KEEP_WORDS.some(w => l.includes(w)));
+    l.startsWith("学习｜") || KEEP_PREFIX.some(p => l.startsWith(p)) || KEEP_WORDS.some(w => l.includes(w)))
+    // 学习日志只留「学习｜日期｜老师｜时长」，上课内容不传出去（用来算宝箱和营火）
+    .map(l => l.startsWith("学习｜") ? l.split("｜").slice(0, 4).join("｜") : l);
   const body = {
     fileContent: lines.join("\n"),
     lastUpdated: DriveApp.getFileById(DOC_ID).getLastUpdated().toISOString()

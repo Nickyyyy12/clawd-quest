@@ -48,6 +48,20 @@ html,body{margin:0;height:100%}
 .setup h2{margin:0;font-size:18px;color:var(--gold)} .setup p{margin:0;font-size:13px;color:var(--dim)}
 .setup input{font:inherit;font-size:13px;padding:8px;background:#0e1322;color:var(--ink);border:2px solid var(--line);width:100%}
 .setup input:focus{outline:2px solid var(--gold)}
+/* 每日机制：宝箱弹窗、背包 */
+.chip.o{color:#ff9a5c} .chip.r{color:#ff9aa0}
+.modal{position:fixed;inset:0;z-index:40;display:grid;place-items:center;background:rgba(8,10,20,.72);padding:16px}
+.mbox{width:min(340px,100%);display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px;background:#1f2538;border:3px solid var(--ink);box-shadow:0 0 0 3px #000,6px 6px 0 3px rgba(0,0,0,.5);text-align:center}
+.mbox.wide{width:min(620px,100%);max-height:86vh;overflow:auto;align-items:stretch;text-align:left}
+.mbox h2{margin:0;font-size:20px} .mday{margin:0;font-size:12px;color:var(--dim)} .mmeta{margin:0;font-size:12px;color:var(--dim)}
+.mbox canvas{width:240px;height:170px;max-width:100%}
+.mbtns{display:flex;gap:8px;margin-top:6px}
+.mhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.bag{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:8px}
+.slot{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;background:#141a2e;color:var(--ink);border:2px solid var(--line);box-shadow:none;font-size:11px;cursor:pointer}
+.slot canvas{width:48px;height:40px}
+.slot.lock{cursor:default;color:var(--dim);opacity:.6}
+.slot.on{background:#2b3557;outline:2px solid var(--gold)}
 /* 升级特效层 */
 #fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
 .toast.err{color:#ff9aa0}
@@ -119,6 +133,12 @@ details summary{cursor:pointer;color:var(--ink)}
         <span class="chip y">? <b id="sShaky">-</b> 待复测</span>
         <button class="chip" id="formNext" type="button" title="回放升级特效"></button>
       </div>
+      <div class="chips daily">
+        <span class="chip o" id="streak">🔥 —</span>
+        <span class="chip" id="mood"></span>
+        <button class="chip" id="chestBtn" type="button" hidden>🎁 <b id="chestN">0</b> 个宝箱</button>
+        <button class="chip" id="bagBtn" type="button">🎒 背包</button>
+      </div>
       <div class="toast" id="status">正在连接 Google Drive，读取学习状态卡…</div>
     </div></section>
     <aside class="legend" aria-label="图例">
@@ -148,6 +168,22 @@ details summary{cursor:pointer;color:var(--ink)}
         <details><summary>老师写下的证据</summary><p class="ev" id="bEv"></p></details>
       </div>
     </section>
+    </div>
+  </div>
+  <div class="modal" id="loot" hidden>
+    <div class="mbox">
+      <p class="mday" id="lootDay"></p>
+      <canvas id="lootCv" width="240" height="170" aria-hidden="true"></canvas>
+      <h2 id="lootName"></h2>
+      <p class="mmeta" id="lootMeta"></p>
+      <div class="mbtns"><button id="lootEquip" type="button" hidden>马上装备</button><button class="ghost" id="lootClose" type="button">收下</button></div>
+    </div>
+  </div>
+  <div class="modal" id="bag" hidden>
+    <div class="mbox wide">
+      <div class="mhead"><h2>🎒 背包 <span id="bagCount"></span></h2><button class="ghost" id="bagClose" type="button">关闭</button></div>
+      <p class="mmeta">每天学习一次就能开一个宝箱。点帽子、颜色、宠物可以装备，再点一次卸下；营地装饰会自动摆在营火旁边。</p>
+      <div class="bag" id="bagGrid"></div>
     </div>
   </div>
   <canvas id="fx" hidden aria-label="升级特效，点击关闭"></canvas>
@@ -278,7 +314,10 @@ function parseCard(text){
   const wd = ["周日","周一","周二","周三","周四","周五","周六"][new Date().getDay()];
   const today = (text.match(new RegExp("计划·"+wd+"：([^\\n]*)"))||[])[1]||"";
   const updated = (text.match(/最后更新：([0-9-]+)/)||[])[1]||"";
-  return {stages:ordered, dou, reviews, allRight, today, wd, updated};
+  // 每次上课的日期（「学习｜2026-10-21｜02｜1.5小时｜…」；跨天的写法两头都算）
+  const days = new Set();
+  for(const l of lines){ if(!l.startsWith("学习｜")) continue; ((l.split("｜")[1]||"").match(/\d{4}-\d{2}-\d{2}/g)||[]).forEach(d=>days.add(d)) }
+  return {stages:ordered, dou, reviews, allRight, today, wd, updated, days:[...days]};
 }
 
 // 血量规则：从 100 起，每个抖点 -5，每次闭卷复习 +10，每次短测全对 +5
@@ -309,6 +348,7 @@ const BODY = [
   "..X.X.X.X.."];
 function px(ctx,x,y,s,i,j,c){ ctx.fillStyle=c; ctx.fillRect(x+i*s,y+j*s,s,s) }
 function drawClawd(ctx,x,y,s,tier,t=0,legPhase=0){
+  const bc = bodyCols(t), tired = DAILY.hungry;
   // 影子
   ctx.fillStyle="rgba(0,0,0,.35)";
   ctx.beginPath(); ctx.ellipse(x+5.5*s,y+8.3*s,5*s,1.3*s,0,0,7); ctx.fill();
@@ -322,18 +362,278 @@ function drawClawd(ctx,x,y,s,tier,t=0,legPhase=0){
     if(c===".") return;
     if(j>=6 && legPhase && (i===2||i===6) && j===7) return; // 走路时抬腿
     if(j>=6 && legPhase && (i===4||i===8) && j===7 && legPhase<0) return;
-    px(ctx,x,y,s,i,j,c==="E"?"#141826":(j>=6?"#c4664a":"#d97757"));
+    px(ctx,x,y,s,i,j,c==="E"?(tired&&j===2?bc[0]:"#141826"):(j>=6?bc[1]:bc[0]));
   }));
   // 高光，让它更立体
-  for(let i=2;i<9;i++) px(ctx,x,y,s,i,0,"#e8957a");
-  if(tier>=1 && tier<3){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,1,"#e5484d"); px(ctx,x,y,s,9,1,"#e5484d"); px(ctx,x,y,s,10,2,"#e5484d") } // 头巾
-  if(tier===3){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,-1,"#b8c0d8"); for(let i=4;i<7;i++) px(ctx,x,y,s,i,-2,"#dfe4f2"); px(ctx,x,y,s,5,-3,"#e5484d") } // 头盔
-  if(tier>=4){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,-1,"#f2c14e"); [2,4,6,8].forEach(i=>px(ctx,x,y,s,i,-2,"#f2c14e")); px(ctx,x,y,s,5,-1,"#e5484d") } // 王冠
+  for(let i=2;i<9;i++) px(ctx,x,y,s,i,0,bc[2]);
+  if(!LOOK.hat && tier>=1 && tier<3){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,1,"#e5484d"); px(ctx,x,y,s,9,1,"#e5484d"); px(ctx,x,y,s,10,2,"#e5484d") } // 头巾
+  if(!LOOK.hat && tier===3){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,-1,"#b8c0d8"); for(let i=4;i<7;i++) px(ctx,x,y,s,i,-2,"#dfe4f2"); px(ctx,x,y,s,5,-3,"#e5484d") } // 头盔
+  if(!LOOK.hat && tier>=4){ for(let i=2;i<9;i++) px(ctx,x,y,s,i,-1,"#f2c14e"); [2,4,6,8].forEach(i=>px(ctx,x,y,s,i,-2,"#f2c14e")); px(ctx,x,y,s,5,-1,"#e5484d") } // 王冠
   if(tier>=2){ // 剑
     for(let j=-3;j<4;j++) px(ctx,x,y,s,11,j,tier>=4?"#ffe9a8":"#dfe6f5");
     px(ctx,x,y,s,10,4,"#f2c14e"); px(ctx,x,y,s,11,4,"#f2c14e"); px(ctx,x,y,s,12,4,"#f2c14e"); px(ctx,x,y,s,11,5,"#7a4b2a");
   }
+  if(LOOK.hat && byId[LOOK.hat]){ const h=byId[LOOK.hat]; drawGrid(ctx,x,y,s,h.px,0,h.j0) }
+  if(LOOK.pet && byId[LOOK.pet]){ const p=byId[LOOK.pet]; drawGrid(ctx,x,y,s,p.px,14,3+Math.round(Math.sin(t/7))) }
 }
+
+// ---------- 每日机制：宝箱、营火、今日第一步、肚子饿 ----------
+// 全部来自学习卡里的「学习｜日期｜…」日志：只有真的学了才会触发
+const PAL = {
+  Y:"#e8c46a", W:"#eef0f7", K:"#1b1b24", R:"#e5484d", B:"#3b82c4", V:"#6b46c1", S:"#f2c14e",
+  G:"#8a92b0", g:"#5c6475", N:"#7a4b2a", M:"#46c37b", F:"#ff7aa8", O:"#f08a3c", L:"#ffe9a8", E:"#141826"
+};
+// r：0 普通 / 1 稀有 / 2 传说 / 3 连续学习里程碑（不从宝箱掉落）
+const LOOT = [
+  {id:"straw",  kind:"hat", r:0, name:"草帽",     j0:-2, px:["...YYYYY...","YYYYYYYYYYY"]},
+  {id:"cap",    kind:"hat", r:0, name:"红色鸭舌帽", j0:-2, px:["..RRRRRR...","..RRRRRRRRR"]},
+  {id:"bow",    kind:"hat", r:0, name:"蝴蝶结",   j0:-1, px:["......F.F..",".......F..."]},
+  {id:"beanie", kind:"hat", r:1, name:"毛线帽",   j0:-3, px:[".....W.....","...BBBBB...","..BBBBBBB.."]},
+  {id:"phones", kind:"hat", r:1, name:"降噪耳机", j0:-1, px:["..GGGGGGG..","gg.......gg","gg.......gg"]},
+  {id:"flower", kind:"hat", r:1, name:"花环",     j0:-1, px:["..FMFMFMF.."]},
+  {id:"pirate", kind:"hat", r:1, name:"海盗帽",   j0:-3, px:["..KKKKKKK..",".KKKWKWKKK.","KKKKKKKKKKK"]},
+  {id:"wizard", kind:"hat", r:2, name:"巫师帽",   j0:-5, px:[".....V.....","....VVV....","...VVSVV...","..VVVVVVV..","VVVVVVVVVVV"]},
+  {id:"mint",   kind:"color", r:0, name:"薄荷色", c:["#5ec4a0","#479e81"]},
+  {id:"sky",    kind:"color", r:0, name:"天空蓝", c:["#6aa9e8","#4f87c4"]},
+  {id:"sakura", kind:"color", r:0, name:"樱花粉", c:["#f29bb8","#d27896"]},
+  {id:"grape",  kind:"color", r:1, name:"葡萄紫", c:["#9b6be0","#7b4fc0"]},
+  {id:"ice",    kind:"color", r:1, name:"冰晶",   c:["#bfe6f5","#93c4d8"]},
+  {id:"night",  kind:"color", r:1, name:"夜空",   c:["#4a5a8a","#2a375e"]},
+  {id:"gold",   kind:"color", r:2, name:"黄金",   c:["#f2c14e","#c99a2e"]},
+  {id:"rainbow",kind:"color", r:2, name:"彩虹",   c:"rainbow"},
+  {id:"chick",  kind:"pet", r:0, name:"小鸡",       px:[".YY.","YEYO","YYYY",".OO."]},
+  {id:"cat",    kind:"pet", r:0, name:"灰猫",       px:["G..G","GGGG","GEGE","GGGG"]},
+  {id:"slime",  kind:"pet", r:0, name:"史莱姆宝宝", px:[".MM.","MEME","MMMM"]},
+  {id:"java",   kind:"pet", r:1, name:"Java 咖啡杯", px:[".L.L.","NNNN.","WWWWW","WWWW.","WWW.."]},
+  {id:"ghost",  kind:"pet", r:1, name:"小幽灵",     px:[".WW.","WEWE","WWWW","W.W."]},
+  {id:"dragon", kind:"pet", r:2, name:"小火龙",     px:["R..R.","RRRR.","RERRR","RRRRO","R.R.."]},
+  {id:"tent",   kind:"camp", r:0, name:"帐篷",   px:["...B...","..BBB..",".BBKBB.","BBBKBBB"]},
+  {id:"books",  kind:"camp", r:0, name:"书堆",   px:["RRRR.","BBBB.",".MMMM"]},
+  {id:"lantern",kind:"camp", r:0, name:"灯笼",   px:[".K.","SLS","SLS",".K."]},
+  {id:"flag",   kind:"camp", r:1, name:"营地旗", px:["WRRR","WRR.","W...","W..."]},
+  {id:"pot",    kind:"camp", r:1, name:"咖啡壶", px:[".KK..","KNNK.","KNNKK","KKKK."]},
+  {id:"guitar", kind:"camp", r:1, name:"吉他",   px:["..N","..N",".OO","OOO","OO."]},
+  {id:"scope",  kind:"camp", r:1, name:"望远镜", px:["GG...","..GG.","...N.","..N.N"]},
+  {id:"snowman",kind:"camp", r:2, name:"雪人",   px:[".W.",".WO","WWW","WWW"]},
+  {id:"torch",  kind:"camp",  r:3, ms:3,  name:"火把", px:[".O.","OSO",".N.",".N."]},
+  {id:"flame",  kind:"color", r:3, ms:7,  name:"火焰", c:["#ff7a3d","#d4552a"]},
+  {id:"phoenix",kind:"pet",   r:3, ms:14, name:"凤凰", px:["O...O","OSOSO",".OEO.","..O.."]},
+  {id:"halo",   kind:"hat",   r:3, ms:30, name:"光环", j0:-3, px:["...SSSSS...","..S.....S..","...SSSSS..."]}
+];
+const RARITY = [{n:"普通",c:"#c8cede"},{n:"稀有",c:"#6aa9e8"},{n:"传说",c:"#f2c14e"},{n:"里程碑",c:"#ff7a3d"}];
+const KIND = {hat:"帽子", color:"颜色", pet:"宠物", camp:"营地"};
+const byId = Object.fromEntries(LOOT.map(o=>[o.id,o]));
+
+function drawGrid(ctx,x,y,s,rows,i0=0,j0=0){
+  rows.forEach((row,j)=>[...row].forEach((c,i)=>{ if(c===".") return; ctx.fillStyle=PAL[c]||c; ctx.fillRect(x+(i0+i)*s,y+(j0+j)*s,s,s) }));
+}
+const todayStr = () => new Date().toLocaleDateString("sv-SE");
+function addDays(d,n){ const t=new Date(d+"T12:00:00"); t.setDate(t.getDate()+n); return t.toLocaleDateString("sv-SE") }
+function strHash(s){ let h=2166136261; for(const ch of s){ h^=ch.charCodeAt(0); h=Math.imul(h,16777619) } return (h>>>0)/4294967296 }
+function mix(a,b,t){ const p=x=>[1,3,5].map(i=>parseInt(x.slice(i,i+2),16)); const A=p(a),B=p(b); return "#"+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,"0")).join("") }
+
+var LOOK = {hat:null,color:null,pet:null};
+try{ Object.assign(LOOK, JSON.parse(localStorage.getItem("clawd-look")||"{}")) }catch(e){}
+var opened = new Set();
+try{ opened = new Set(JSON.parse(localStorage.getItem("clawd-opened")||"[]")) }catch(e){}
+var DAILY = {ready:false, days:[], streak:0, best:0, fire:0, warn:false, owned:new Map(), loot:{}, unopened:[], since:99, hungry:false, studiedToday:false, step:""};
+
+function computeDaily(){
+  const days = [...(data.days||[])].sort();
+  const today = todayStr();
+  const d = {ready: days.length>0, days, owned:new Map(), loot:{}};
+  // 宽容连续：漏 1 天不断（营火变小），连续漏 2 天才清零；今天还没学不算漏
+  let cur=0, best=0, miss=0;
+  if(days.length){
+    const set = new Set(days);
+    for(let t=days[0]; t<=today; t=addDays(t,1)){
+      if(set.has(t)){ if(miss>=2) cur=0; cur++; miss=0; best=Math.max(best,cur) }
+      else if(t!==today) miss++;
+    }
+    if(miss>=2) cur=0;
+  }
+  d.streak=cur; d.best=best; d.warn = cur>0 && miss===1;
+  const lv = cur>=30?5:cur>=14?4:cur>=7?3:cur>=3?2:cur>=1?1:0;
+  d.fire = Math.max(0, lv-(d.warn?1:0));
+  // 每个学习日一个宝箱：掉落由日期决定，换电脑也一样；已有的不会重复掉
+  const pools=[0,1,2].map(r=>LOOT.filter(o=>o.r===r));
+  for(const day of days){
+    const v=strHash(day+"#r"), r = v<.1?2:v<.4?1:0;
+    let pool=pools[r].filter(o=>!d.owned.has(o.id));
+    if(!pool.length) pool=pools.flat().filter(o=>!d.owned.has(o.id));
+    if(!pool.length){ d.loot[day]=null; continue }
+    const item = pool[Math.floor(strHash(day+"#i")*pool.length)];
+    d.loot[day]=item.id; d.owned.set(item.id, day);
+  }
+  for(const o of LOOT) if(o.ms && best>=o.ms) d.owned.set(o.id, `连续 ${o.ms} 天`);
+  d.unopened = days.filter(x=>d.loot[x] && !opened.has(x));
+  const last = days[days.length-1];
+  d.since = last ? Math.round((new Date(today+"T12:00:00")-new Date(last+"T12:00:00"))/864e5) : 99;
+  d.studiedToday = d.since===0;
+  d.hungry = d.ready && d.since>=2;
+  let step = (data.today||"").split("。")[0].replace(/（[^）]*）/g,"").replace(/^先做/,"").trim();
+  if(step.length>22) step = step.slice(0,21)+"…";
+  d.step = step || "打开学习卡，看看今天学什么";
+  DAILY = d;
+  for(const k of ["hat","color","pet"]) if(LOOK[k] && !d.owned.has(LOOK[k])) LOOK[k]=null;
+}
+function bodyCols(t){
+  const o = LOOK.color && byId[LOOK.color];
+  if(!o) return ["#d97757","#c4664a","#e8957a"];
+  if(o.c==="rainbow"){ const h=(t*4)%360; return [`hsl(${h},75%,62%)`,`hsl(${h},70%,48%)`,`hsl(${h},85%,76%)`] }
+  return [o.c[0],o.c[1],mix(o.c[0],"#ffffff",.3)];
+}
+
+// 营火：火焰大小 = 连续学习等级
+function drawCamp(x,y){
+  const lv = DAILY.fire, f = frame;
+  const camps = LOOT.filter(o=>o.kind==="camp" && DAILY.owned.has(o.id));
+  const spots = [[-34,-2],[22,4],[-48,14],[30,-12],[-20,18],[40,16],[-58,-8],[10,22],[-6,-20]];
+  camps.forEach((o,k)=>{ const [dx,dy]=spots[k%spots.length]; drawGrid(mx,x+dx,y+dy-o.px.length*3,3,o.px) });
+  mx.fillStyle="rgba(0,0,0,.3)"; mx.beginPath(); mx.ellipse(x+6,y+6,14,4,0,0,7); mx.fill();
+  mx.fillStyle="#6b4226"; mx.fillRect(x-4,y+1,20,4); mx.fillStyle="#4f2f1b"; mx.fillRect(x,y-1,12,4);
+  if(lv===0){ // 只剩余烬
+    mx.fillStyle = f%30<15 ? "#a8323a" : "#e5484d"; mx.fillRect(x+4,y-2,3,2); mx.fillRect(x+8,y-1,2,2);
+    mx.fillStyle="rgba(200,200,210,.35)"; mx.fillRect(x+5+Math.sin(f/10)*2,y-10-(f%40)/4,3,3);
+    return;
+  }
+  const h = 6+lv*5, w = 6+lv*2;
+  for(let k=0;k<h;k+=2){
+    const t=k/h, ww=Math.max(1,w*(1-t)*(0.8+0.3*Math.sin(f/4+k)));
+    mx.fillStyle = t<.3?"#ffe9a8":t<.6?"#f2c14e":"#f08a3c";
+    mx.fillRect(Math.round(x+6-ww/2+Math.sin(f/5+k)*1.2),y-k,Math.ceil(ww),2);
+  }
+  if(lv>=3) for(let k=0;k<lv;k++){ const p=(f*1.5+k*37)%60; mx.fillStyle="#f2c14e"; mx.fillRect(x+4+Math.sin(k*3+f/9)*8,y-h-p/2,2,2) }
+  const g=mx.createRadialGradient(x+6,y-h/3,2,x+6,y-h/3,30+lv*10);
+  g.addColorStop(0,`rgba(242,193,78,${.12+lv*.04})`); g.addColorStop(1,"rgba(242,193,78,0)");
+  mx.fillStyle=g; mx.fillRect(x-60,y-80,130,120);
+}
+// 宝箱：今天以前学过、还没打开的每一天各一个
+let chestBox = null;
+function drawChest(x,y){
+  chestBox = null;
+  const n = DAILY.unopened.length; if(!n) return;
+  const b = Math.abs(Math.sin(frame/8))*4;
+  const cy = y-b;
+  mx.fillStyle="rgba(0,0,0,.3)"; mx.beginPath(); mx.ellipse(x+9,y+12,12,3,0,0,7); mx.fill();
+  mx.fillStyle="#7a4b2a"; mx.fillRect(x,cy,18,12); mx.fillStyle="#9a6236"; mx.fillRect(x,cy-6,18,7);
+  mx.fillStyle="#f2c14e"; mx.fillRect(x,cy,18,2); mx.fillRect(x+7,cy-2,4,6); mx.fillRect(x,cy-6,2,18); mx.fillRect(x+16,cy-6,2,18);
+  mx.font="10px 'Press Start 2P', monospace"; mx.textAlign="center"; mx.fillStyle="#f2c14e";
+  mx.fillText(n>1?`!×${n}`:"!", x+9, cy-12);
+  chestBox = [x-8,cy-24,x+26,y+14];
+}
+// 对话气泡：今日第一步 / 肚子饿 / 学过了
+function drawBubble(x,y){
+  if(!data) return;
+  let msg;
+  if(!DAILY.ready) msg = "更新 Apps Script 后，我就能看到你每天的学习记录";
+  else if(DAILY.studiedToday) msg = `今天学过啦！营火连续 ${DAILY.streak} 天`;
+  else if(DAILY.hungry) msg = `好饿…先做：${DAILY.step}`;
+  else if(DAILY.warn) msg = `营火快灭了！先做：${DAILY.step}`;
+  else msg = `今天第一步：${DAILY.step}`;
+  mx.font="13px DotGothic16, sans-serif";
+  const w = Math.min(260, mx.measureText(msg).width+16), lines=[];
+  let line="";
+  for(const ch of msg){ if(mx.measureText(line+ch).width>w-16){ lines.push(line); line="" } line+=ch }
+  lines.push(line);
+  const h = lines.length*16+10, bx = Math.max(4,Math.min(W-w-4,x-w/2)), by = y-58-h+Math.sin(frame/14)*1.5;
+  mx.fillStyle="#000"; mx.fillRect(bx+3,by+3,w,h);
+  mx.fillStyle = DAILY.hungry||DAILY.warn ? "#ffe2e2" : "#fffbe8"; mx.fillRect(bx,by,w,h);
+  mx.fillStyle="#141826"; mx.fillRect(bx,by,w,2); mx.fillRect(bx,by+h-2,w,2); mx.fillRect(bx,by,2,h); mx.fillRect(bx+w-2,by,2,h);
+  const tx = Math.max(bx+8,Math.min(bx+w-14,x-3));
+  mx.fillStyle = DAILY.hungry||DAILY.warn ? "#ffe2e2" : "#fffbe8"; mx.fillRect(tx,by+h-2,6,6);
+  mx.fillStyle="#141826"; mx.fillRect(tx-2,by+h,2,4); mx.fillRect(tx+6,by+h,2,4); mx.fillRect(tx,by+h+4,6,2);
+  mx.textAlign="left";
+  lines.forEach((l,k)=>mx.fillText(l,bx+8,by+17+k*16));
+}
+
+// ---------- 开宝箱 ----------
+function itemPreview(ctx,o,w,h,t=0){
+  ctx.clearRect(0,0,w,h); ctx.imageSmoothingEnabled=false;
+  const s = Math.max(2,Math.floor(Math.min(w/15,h/13)));
+  if(o.kind==="camp" || o.kind==="pet"){ const cols=Math.max(...o.px.map(r=>r.length)); const ss=Math.floor(Math.min(w/(cols+2),h/(o.px.length+2))); drawGrid(ctx,(w-cols*ss)/2,(h-o.px.length*ss)/2,ss,o.px); return }
+  const save = {...LOOK}; LOOK[o.kind]=o.id;
+  drawClawd(ctx,(w-11*s)/2,(h-8*s)/2+s,s,0,t);
+  Object.assign(LOOK,save);
+}
+function openChest(){
+  const day = DAILY.unopened[0]; if(!day) return;
+  const o = byId[DAILY.loot[day]];
+  const box = document.getElementById("loot");
+  const cv = document.getElementById("lootCv"), c = cv.getContext("2d");
+  document.getElementById("lootDay").textContent = `${day} 的学习奖励`;
+  document.getElementById("lootName").textContent = "";
+  document.getElementById("lootMeta").textContent = "";
+  const eq = document.getElementById("lootEquip"); eq.hidden = true;
+  box.hidden = false;
+  const t0 = performance.now(), reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  (function anim(now){
+    const t = reduce ? 2 : (now-t0)/1000;
+    c.clearRect(0,0,cv.width,cv.height); c.imageSmoothingEnabled=false;
+    const cx=cv.width/2, cy=cv.height/2;
+    if(t<1.1){ // 宝箱越抖越厉害
+      const sh = Math.sin(t*40)*t*5;
+      c.fillStyle="#7a4b2a"; c.fillRect(cx-36+sh,cy-6,72,40); c.fillStyle="#9a6236"; c.fillRect(cx-36+sh,cy-30,72,26);
+      c.fillStyle="#f2c14e"; c.fillRect(cx-36+sh,cy-6,72,5); c.fillRect(cx-7+sh,cy-12,14,18);
+    } else {
+      const k = Math.min(1,(t-1.1)*3);
+      const col = RARITY[o.r].c;
+      c.save(); c.translate(cx,cy); c.rotate(t*.7);
+      for(let i=0;i<12;i++){ c.rotate(Math.PI/6); c.fillStyle=`${col}${o.r>=2?"55":"33"}`; c.beginPath(); c.moveTo(0,0); c.lineTo(-10,-200); c.lineTo(10,-200); c.fill() }
+      c.restore();
+      if(t<1.4){ c.fillStyle=`rgba(255,255,255,${1-(t-1.1)/.3})`; c.fillRect(0,0,cv.width,cv.height) }
+      const off = document.createElement("canvas"); off.width=120; off.height=96;
+      itemPreview(off.getContext("2d"),o,120,96,now/16);
+      const sz = 120*(0.6+0.4*k);
+      c.drawImage(off,cx-sz/2,cy-sz*0.4,sz,sz*0.8);
+      if(!document.getElementById("lootName").textContent){
+        document.getElementById("lootName").textContent = o.name;
+        document.getElementById("lootName").style.color = RARITY[o.r].c;
+        document.getElementById("lootMeta").textContent = `${RARITY[o.r].n} · ${KIND[o.kind]}${DAILY.unopened.length>1?` · 还有 ${DAILY.unopened.length-1} 个宝箱`:""}`;
+        if(o.kind!=="camp"){ eq.hidden=false; eq.onclick=()=>{ equip(o.id); eq.textContent="已装备" } ; eq.textContent="马上装备" }
+        opened.add(day); try{ localStorage.setItem("clawd-opened",JSON.stringify([...opened])) }catch(e){}
+      }
+    }
+    if(!box.hidden && t<8) requestAnimationFrame(anim);
+  })(t0);
+}
+function equip(id){
+  const o = byId[id]; if(!o || o.kind==="camp") return;
+  LOOK[o.kind] = LOOK[o.kind]===id ? null : id;
+  try{ localStorage.setItem("clawd-look",JSON.stringify(LOOK)) }catch(e){}
+  drawFace(); renderBag();
+}
+function renderBag(){
+  const grid = document.getElementById("bagGrid"); if(!grid) return;
+  grid.innerHTML = "";
+  const owned = DAILY.owned;
+  document.getElementById("bagCount").textContent = `${owned.size} / ${LOOT.length}`;
+  for(const o of LOOT){
+    const has = owned.has(o.id), on = LOOK[o.kind]===o.id;
+    const b = document.createElement("button"); b.type="button"; b.className="slot"+(has?"":" lock")+(on?" on":"");
+    b.style.borderColor = has ? RARITY[o.r].c : "";
+    b.title = has ? `${o.name}（${RARITY[o.r].n}${KIND[o.kind]}）· 来自 ${owned.get(o.id)}` : (o.ms ? `连续学习 ${o.ms} 天解锁` : "开宝箱获得");
+    const cv = document.createElement("canvas"); cv.width=48; cv.height=40;
+    if(has) itemPreview(cv.getContext("2d"),o,48,40);
+    const cap = document.createElement("span"); cap.textContent = has ? o.name : (o.ms ? `🔥${o.ms}天` : "？");
+    b.append(cv,cap);
+    if(has && o.kind!=="camp") b.onclick=()=>equip(o.id);
+    grid.append(b);
+  }
+}
+function updateDaily(){
+  computeDaily();
+  const st = document.getElementById("streak"), md = document.getElementById("mood"), cb = document.getElementById("chestBtn");
+  if(!DAILY.ready){ st.textContent="🔥 —"; md.textContent="需要更新 Apps Script"; cb.hidden=true; return }
+  st.textContent = `🔥 连续 ${DAILY.streak} 天`;
+  md.textContent = DAILY.studiedToday ? "精神满满" : DAILY.hungry ? `饿了 ${DAILY.since} 天` : DAILY.warn ? "营火快灭了" : "等你开工";
+  md.className = "chip " + (DAILY.studiedToday ? "g" : (DAILY.hungry||DAILY.warn) ? "r" : "");
+  cb.hidden = !DAILY.unopened.length;
+  document.getElementById("chestN").textContent = DAILY.unopened.length;
+  renderBag();
+}
+
+function drawFace(){ const fc=document.getElementById("face").getContext("2d"); fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, frame) }
 
 // ---------- 地图 ----------
 const map = document.getElementById("map"), mx = map.getContext("2d");
@@ -535,11 +835,14 @@ function drawMap(){
   const [cx,cy] = clawdXY || nodes[Math.min(pos,n-1)];
   // 按 y 排序，让前面的东西挡住后面的
   const items = nodes.map((p,i)=>({y:p[1],vis:p[1]>vy0-60&&p[1]<vy0+vh+60,draw:()=>drawNode(i,p[0],p[1],data?data.stages[i]:null,i===todayIdx)}));
+  const [kx,ky] = nodes[Math.min(pos,n-1)];
+  if(data) items.push({y:ky-4,draw:()=>drawCamp(kx-58,ky-2)});
   items.push({y:cy+1,draw:()=>{
-    const bob = walking ? Math.abs(Math.sin(frame/3))*3 : Math.sin(frame/15);
+    const bob = walking ? Math.abs(Math.sin(frame/3))*3 : (DAILY.hungry ? 0 : Math.sin(frame/15));
     drawClawd(mx,cx-16,cy-30-bob,3,tier,frame,walking?(Math.floor(frame/4)%2?1:-1):0);
   }});
   items.filter(o=>o.vis!==false).sort((a,b)=>a.y-b.y).forEach(o=>o.draw());
+  if(data && !walking){ drawChest(kx+34,ky-8); drawBubble(cx,cy) } else chestBox = null;
   // 云雾：今天的关卡往上 2 关之后都盖住
   if(data && todayIdx>=0 && todayIdx+2<n){
     const fogY = nodes[todayIdx+2][1] - 30;
@@ -594,6 +897,7 @@ map.addEventListener("click",e=>{
   if(!data||walking) return;
   const r = map.getBoundingClientRect(), sx = map.width/r.width, sy = map.height/r.height;
   const x=(e.clientX-r.left)*sx, y=(e.clientY-r.top)*sy;
+  if(chestBox && x>=chestBox[0] && x<=chestBox[2] && y>=chestBox[1] && y<=chestBox[3]){ openChest(); return }
   let best=-1, bd=1e9;
   nodes.forEach(([nx,ny],i)=>{ const d=(nx-x)**2+(ny-y)**2; if(d<bd){bd=d;best=i} });
   if(best<0 || bd>48*48) return;
@@ -699,14 +1003,14 @@ function render(){
   const {hp,douN} = computeHp(data);
   const cleared = data.stages.filter(s=>s.status==="cleared").length;
   tier = tierOf(cleared);
+  updateDaily();
   document.getElementById("hpv").textContent = hp+"/100";
   const bar = document.getElementById("hpi"); bar.style.width = hp+"%"; bar.className = hp>=60?"ok":"";
   document.getElementById("sCleared").textContent = cleared;
   document.getElementById("sShaky").textContent = data.stages.filter(s=>s.status==="shaky"||s.status==="unrec").length;
   document.getElementById("formName").textContent = FORMS[tier].name;
   document.getElementById("lvl").textContent = cleared;
-  const fc = document.getElementById("face").getContext("2d");
-  fc.clearRect(0,0,48,48); drawClawd(fc, tier>=2?2:5, tier>=3?16:12, 3, tier, 0);
+  drawFace();
   const next = FORMS[tier+1];
   document.getElementById("formNext").textContent = next ? `★ 再过 ${next.min-cleared} 关进化成「${next.name}」` : "★ 已是最强形态";
   document.getElementById("hpLog").innerHTML = `<li>起始血量 <b>100</b></li>`
@@ -855,6 +1159,10 @@ document.getElementById("refresh").addEventListener("click",()=>load());
 document.getElementById("settings").addEventListener("click",showSetup);
 
 load(); startPolling();
+document.getElementById("chestBtn").addEventListener("click",openChest);
+document.getElementById("lootClose").addEventListener("click",()=>{ document.getElementById("loot").hidden=true; updateDaily() });
+document.getElementById("bagBtn").addEventListener("click",()=>{ renderBag(); document.getElementById("bag").hidden=false });
+document.getElementById("bagClose").addEventListener("click",()=>{ document.getElementById("bag").hidden=true });
 </script>
 </body>
 </html>
