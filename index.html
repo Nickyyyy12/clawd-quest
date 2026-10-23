@@ -148,6 +148,9 @@ body:not(.toy) .loader3d{display:none}
 .zones{gap:4px 4px}
 .zones .chip.zb{font-size:11px;color:var(--ink);text-decoration:none;padding:1px 7px;border:1px solid rgba(127,127,127,.35);border-radius:999px;background:transparent}
 .zones .chip.zb.on{background:#f2c14e;border-color:#f2c14e;color:#3a3330}
+/* 3D 宝箱舞台 */
+.mbox canvas.loot3d{width:min(300px,100%);height:230px}
+body.toy .slot canvas{width:58px;height:48px}
 /* 升级特效层 */
 #fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
 .toast.err{color:#ff9aa0}
@@ -266,6 +269,7 @@ details summary{cursor:pointer;color:var(--ink)}
     <div class="mbox">
       <p class="mday" id="lootDay"></p>
       <canvas id="lootCv" width="240" height="170" aria-hidden="true"></canvas>
+      <canvas id="loot3d" class="loot3d" hidden aria-hidden="true"></canvas>
       <h2 id="lootName"></h2>
       <p class="mmeta" id="lootMeta"></p>
       <div class="mbtns"><button id="lootEquip" type="button" hidden>马上装备</button><button class="ghost" id="lootClose" type="button">收下</button></div>
@@ -655,6 +659,21 @@ function itemPreview(ctx,o,w,h,t=0){
 function openChest(){
   const day = DAILY.unopened[0]; if(!day) return;
   const o = byId[DAILY.loot[day]];
+  // 3D 画风：在独立的 3D 小舞台里开宝箱
+  if(STYLE==="toy" && window.T3 && T3.loot3d){
+    const box = document.getElementById("loot"), eq = document.getElementById("lootEquip"), nm = document.getElementById("lootName");
+    document.getElementById("lootDay").textContent = `${day} 的学习奖励`;
+    nm.textContent = ""; document.getElementById("lootMeta").textContent = ""; eq.hidden = true;
+    document.getElementById("lootCv").hidden = true; document.getElementById("loot3d").hidden = false; box.hidden = false;
+    T3.loot3d(o, ()=>{
+      nm.textContent = o.name; nm.style.color = ["#7d8597","#3f86d6","#c98a0c","#e0662a"][o.r];
+      document.getElementById("lootMeta").textContent = `${RARITY[o.r].n} · ${KIND[o.kind]}${DAILY.unopened.length>1?` · 还有 ${DAILY.unopened.length-1} 个宝箱`:""}`;
+      if(o.kind!=="camp"){ eq.hidden = false; eq.textContent = "马上装备"; eq.onclick = ()=>{ equip(o.id); eq.textContent = "已装备" } }
+      opened.add(day); try{ localStorage.setItem("clawd-opened",JSON.stringify([...opened])) }catch(e){}
+    });
+    return;
+  }
+  document.getElementById("lootCv").hidden = false; const l3 = document.getElementById("loot3d"); if(l3) l3.hidden = true;
   const box = document.getElementById("loot");
   const cv = document.getElementById("lootCv"), c = cv.getContext("2d");
   cv.width = Math.round(240*DPR()); cv.height = Math.round(170*DPR()); c.setTransform(DPR(),0,0,DPR(),0,0);
@@ -711,7 +730,7 @@ function renderBag(){
     b.style.borderColor = has ? RARITY[o.r].c : "";
     b.title = has ? `${o.name}（${RARITY[o.r].n}${KIND[o.kind]}）· 来自 ${owned.get(o.id)}` : (o.ms ? `连续学习 ${o.ms} 天解锁` : "开宝箱获得");
     const cv = document.createElement("canvas"); cv.width=96; cv.height=80;
-    if(has) itemPreview(cv.getContext("2d"),o,96,80);
+    if(has){ if(STYLE==="toy" && window.T3 && T3.thumb) cv.getContext("2d").drawImage(T3.thumb(o),0,0,96,80); else itemPreview(cv.getContext("2d"),o,96,80) }
     const cap = document.createElement("span"); cap.textContent = has ? o.name : (o.ms ? `🔥${o.ms}天` : "？");
     b.append(cv,cap);
     if(has && o.kind!=="camp") b.onclick=()=>equip(o.id);
@@ -2037,6 +2056,125 @@ const T3 = { ok:false };
   };
   T3.isLooking = ()=>looking!==null;
   T3.lookBack = ()=>{ looking = null; markZone(null); place(); zooming = {t:0, from:camera.position.distanceTo(controls.target), to:16, out:true} };
+
+
+  // ---------- 开宝箱和背包小图：和地图同一套 3D 玩具风 ----------
+  // 一个独立的小舞台（摄影棚灯光 + 圆台），宝箱弹窗和背包缩略图共用这套做法
+  function clawdModel(look){
+    const g = new THREE.Group(), c = look.color && byId[look.color], rb = c && c.c==="rainbow";
+    const main = c && !rb ? c.c[0] : rb ? "#ff8fb1" : CL, dark = c && !rb ? c.c[1] : rb ? "#8fb3ff" : "#c4664a";
+    g.add(box(1.5,1.0,1.0,main,0,.95,0,.1), box(.32,.26,.3,dark,-.92,1.0,0,.05), box(.32,.26,.3,dark,.92,1.0,0,.05));
+    [-.33,.33].forEach(x=>{ const e = new THREE.Mesh(rbox(.1,.34,.06,.03), mat("#1d1a1a",{roughness:.4})); e.position.set(x,1.08,.5); g.add(e) });
+    [-.55,-.2,.2,.55].forEach((x,k)=>g.add(box(.16,.42,.16,dark,x,.21,(k%2?-.12:.12),.04)));
+    if(look.hat){ const h = byId[look.hat], v = voxels(h.px,U,1.04,0,h.j0,true); v.position.set(-5*U,1.45-.5*U,0); g.add(v) }
+    return g;
+  }
+  function itemModel(o){
+    if(o.kind==="hat") return clawdModel({hat:o.id});
+    if(o.kind==="color") return clawdModel({color:o.id});
+    return centered(o.px, o.kind==="pet" ? .3 : .26, o.kind==="pet" ? .9 : .7);
+  }
+  function fitModel(m, size){
+    const b = new THREE.Box3().setFromObject(m), sz = b.getSize(new THREE.Vector3());
+    return size/Math.max(sz.x, sz.y, .5);
+  }
+  let glowT = null;
+  function glowTex(){
+    if(glowT) return glowT;
+    const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d");
+    const r = g.createRadialGradient(64,64,0,64,64,64); r.addColorStop(0,"rgba(255,255,255,1)"); r.addColorStop(.35,"rgba(255,255,255,.45)"); r.addColorStop(1,"rgba(255,255,255,0)");
+    g.fillStyle = r; g.fillRect(0,0,128,128);
+    return glowT = new THREE.CanvasTexture(c);
+  }
+  function lootStage(canvas, keep){
+    const r = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true, preserveDrawingBuffer:!!keep});
+    r.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
+    r.outputEncoding = THREE.sRGBEncoding; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1;
+    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight("#fff6ec","#b89f88",.7));
+    const d = new THREE.DirectionalLight("#fff1e0",1.6); d.position.set(-3,6,4); d.castShadow = true;
+    d.shadow.mapSize.set(1024,1024); Object.assign(d.shadow.camera,{left:-3,right:3,top:3,bottom:-3}); sc.add(d);
+    const ped = box(2.2,.26,2.2,"#efe6da",0,-.13,0,.14); sc.add(ped);
+    const cam = new THREE.PerspectiveCamera(32,1,.1,50); cam.position.set(0,2.3,9.2); cam.lookAt(0,1.15,0);
+    return {r, sc, cam, ped, items:[]};
+  }
+  const RCOL = ["#c9cfdb","#7fb2ff","#ffcf5a","#ff8a4c"];
+  let L3 = null;
+  T3.loot3d = (o, reveal)=>{
+    const cv3 = document.getElementById("loot3d"), modal = document.getElementById("loot");
+    if(!L3) L3 = lootStage(cv3);
+    const {r, sc, cam} = L3;
+    const w = cv3.clientWidth || 300, h = cv3.clientHeight || 230;
+    r.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix();
+    L3.items.forEach(m=>sc.remove(m)); L3.items = [];
+    const add = m=>{ sc.add(m); L3.items.push(m); return m };
+    // 宝箱：复制地图上那只
+    const ch = add(chest.clone(true)); ch.visible = true; ch.position.set(0,0,0); ch.rotation.set(0,0,0); ch.scale.setScalar(1.7);
+    const lidC = ch.children[1]; lidC.position.set(0,.68,0); lidC.rotation.x = 0;
+    // 奖励物品：先藏在宝箱里
+    const item = add(itemModel(o)); const k = fitModel(item, 1.55); item.scale.setScalar(.001); item.visible = false;
+    item.traverse(m=>{ if(m.isMesh){ m.castShadow = true; m.receiveShadow = true } });
+    // 稀有度：背后的柔光和彩色点光，传说更亮
+    const col = RCOL[o.r];
+    const glow = add(new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex(), color:col, transparent:true, opacity:0, depthWrite:false})));
+    glow.scale.set(5.5,5.5,1); glow.position.set(0,1.3,-1);
+    const pl = add(new THREE.PointLight(col, 0, 9)); pl.position.set(0,2.2,2.2);
+    const bits = [];
+    const t0 = performance.now(), reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let opened = false;
+    (function frame(){
+      if(modal.hidden) return;
+      const t = reduce ? 3 : (performance.now()-t0)/1000;
+      if(t < .9){                                            // 抖动，越来越厉害
+        ch.rotation.z = Math.sin(t*42)*.07*t; ch.position.y = Math.abs(Math.sin(t*20))*.08*t;
+      } else {                                               // 开盖
+        ch.rotation.z = 0;
+        const a = -Math.min(1,(t-.9)/.22)*1.7;
+        lidC.position.set(0,.53,-.31).add(new THREE.Vector3(0,.15,.31).applyAxisAngle(new THREE.Vector3(1,0,0), a));
+        lidC.rotation.x = a;
+      }
+      if(t > 1.0 && !opened){
+        opened = true; item.visible = true; reveal();
+        for(let n=0;n<(o.r>=2?44:28);n++){
+          const m = add(new THREE.Mesh(shard, mat(["#ffd66b","#ffffff",col,"#ff9f6b"][n%4])));
+          m.position.set((Math.random()-.5)*.6, 1, (Math.random()-.5)*.4); m.castShadow = true;
+          m.userData.v = new THREE.Vector3((Math.random()-.5)*4.5, 3+Math.random()*3.5, (Math.random()-.5)*3);
+          bits.push(m);
+        }
+      }
+      if(t > 1.0){                                           // 物品升起、放大、旋转；宝箱沉下去
+        const p = Math.min(1,(t-1.0)/.7), e = 1-Math.pow(1-p,3);
+        item.scale.setScalar(k*(.05+.95*e)*(1+Math.sin(p*Math.PI)*.12));
+        item.position.y = .15 + e*.95 + Math.sin(t*2)*.05;
+        item.rotation.y = Math.sin(t*.9)*.55;   // 左右轻轻摆，脸一直朝着你
+        ch.position.y = -e*2.2; ch.scale.setScalar(1.7*(1-e*.5)); ch.visible = e < .98;
+        glow.material.opacity = e*(o.r>=2 ? .95 : .65); glow.material.rotation = t*.2;
+        pl.intensity = e*(o.r>=2 ? 1.6 : 1);
+      }
+      bits.forEach(m=>{ m.userData.v.y -= 9.8/60; m.position.addScaledVector(m.userData.v, 1/60); m.rotation.x += .2; m.rotation.y += .15; if(m.position.y < -.1){ m.position.y = -.1; m.userData.v.set(0,0,0) } });
+      r.render(sc, cam);
+      requestAnimationFrame(frame);
+    })();
+  };
+  // 背包缩略图：同一个舞台拍一张照片，缓存起来
+  let TH = null; const thumbs = {};
+  T3.thumb = o=>{
+    if(thumbs[o.id]) return thumbs[o.id];
+    if(!TH){
+      const c = document.createElement("canvas"); c.width = 192; c.height = 160;
+      TH = lootStage(c, true); TH.r.setPixelRatio(1); TH.r.setSize(192,160,false);
+      TH.cam.aspect = 192/160; TH.cam.position.set(0,2.2,6.4); TH.cam.lookAt(0,.9,0); TH.cam.updateProjectionMatrix();
+      TH.ped.scale.set(.85,1,.85);
+    }
+    const m = itemModel(o); m.scale.setScalar(fitModel(m, 2.2)); m.rotation.y = -.5; TH.sc.add(m);
+    m.traverse(x=>{ if(x.isMesh){ x.castShadow = true; x.receiveShadow = true } });
+    TH.r.render(TH.sc, TH.cam);
+    const out = document.createElement("canvas"); out.width = 192; out.height = 160;
+    out.getContext("2d").drawImage(TH.r.domElement, 0, 0);
+    TH.sc.remove(m);
+    return thumbs[o.id] = out;
+  };
 
   T3.debug = ()=>({dist:camera.position.distanceTo(controls.target), target:controls.target.toArray().map(v=>+v.toFixed(2)), cam:camera.position.toArray().map(v=>+v.toFixed(2)), zooming, fight:!!fight});
   T3.start = startBattle; T3.attack = attack; T3.endBattle = ()=>endBattle(false); T3.levelUp = levelUp3D;
