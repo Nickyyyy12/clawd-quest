@@ -1712,7 +1712,7 @@ const T3 = { ok:false };
     mouse.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
     ray.setFromCamera(mouse, camera);
     const hit = ray.intersectObjects([...tiles, ...chest.children], false)[0]; if(!hit) return;
-    if(hit.object.userData.chest){ if(chest.visible) openChest(); return }
+    if(hit.object.userData.chest){ if(chest.visible && !chestAnim) chestAnim = {t:0, burst:false}; return }
     const to = hit.object.userData.level;
     if(to===at){ zoomIn(to); return }
     const dir = to>at ? 1 : -1;
@@ -1773,9 +1773,9 @@ const T3 = { ok:false };
     flames.forEach((f,i)=>{ f.visible = lv>0; const s=(.55+lv*.12)*(1+(reduce?0:Math.sin(t*9+i*2)*.12)); f.scale.setScalar(s); f.rotation.y=t*(1.4+i*.6) });
     ember.visible = lv===0; fireLight.intensity = lv>0 ? (.6+lv*.25+(reduce?0:Math.sin(t*13)*.15)) : .25;
     chest.visible = DAILY.unopened && DAILY.unopened.length>0 && !hops.length;
-    if(chest.visible && !reduce){ chest.position.y = (T3.pos3[at]?T3.pos3[at].base:0) + Math.abs(Math.sin(t*2.4))*.15 }
+    if(chest.visible && !reduce && !chestAnim){ chest.position.y = (T3.pos3[at]?T3.pos3[at].base:0) + Math.abs(Math.sin(t*2.4))*.15 }
     world.traverse(o=>{ if(o.userData.spin) o.rotation.y=t*1.2; if(o.userData.pulse) o.scale.setScalar(1+Math.sin(t*3)*.06); if(o.userData.cloud && !reduce) o.position.x=Math.sin(t*.2)*.4 });
-    stepBattle(dt,t); stepCelebrate(dt); stepFx(dt);
+    stepBattle(dt,t); stepCelebrate(dt); stepFx(dt); stepGear(dt,t); stepChest(dt);
     // 镜头跟着小 Clawd；进入关卡时拉近
     controls.target.lerp(camTarget, .06);
     if(zooming){ zooming.t=Math.min(1,zooming.t+dt*1.6); const d=zooming.from+((zooming.to||7)-zooming.from)*zooming.t; if(zooming.out && zooming.t>=1) zooming=null; v.copy(camera.position).sub(controls.target).setLength(d); camera.position.copy(controls.target).add(v) }
@@ -1949,6 +1949,103 @@ const T3 = { ok:false };
       if(m.position.y < -6) u.life = 0;
       u.life -= dt; if(u.life<=0){ scene.remove(m); fx3.splice(k,1) }
     }
+  }
+
+
+  // ---------- 3D 装备和装扮 ----------
+  // 34 件装扮本来就是像素网格（LOOT 里的 px），这里把每个格子变成一个小圆角方块，自动得到 3D 模型
+  const lin = c => new THREE.Color(c).convertSRGBToLinear();
+  const skin = mat(CL).clone(), skinDark = mat(CL).clone();
+  skinDark.color = lin("#c4664a");
+  body.children.slice(0,3).forEach(m=>m.material = skin);
+  legs.forEach(l=>l.material = skinDark);
+  const gear = new THREE.Group(); body.add(gear);
+  const petG = new THREE.Group(); clawd.add(petG);
+  const campG = new THREE.Group(); fire.add(campG);
+  const U = 1.5/7;                         // 一格像素 = 身体宽度的 1/7
+  // taper：每一行的厚度跟这一行的宽度成正比，帽子就会是锥形、圆顶，而不是一块平板
+  function voxels(rows, u, depth, i0=0, j0=0, taper=false){
+    const g = new THREE.Group();
+    rows.forEach((row,j)=>[...row].forEach((c,i)=>{
+      if(c===".") return;
+      const filled = [...row].filter(ch=>ch!==".").length;
+      const d = taper ? Math.min(depth, Math.max(u, filled*u*.95)) : depth;
+      const m = new THREE.Mesh(rbox(u*1.02,u*1.02,d,Math.min(u,d)*.2), mat(PAL[c]||c));
+      m.position.set((i0+i)*u, -(j0+j)*u, 0); m.castShadow = true; m.receiveShadow = true; g.add(m);
+    }));
+    return g;
+  }
+  const centered = (rows,u,depth)=>{ const g=voxels(rows,u,depth), w=Math.max(...rows.map(r=>r.length))*u, h=rows.length*u; g.position.set(-w/2+u/2, h-u/2, 0); const o=new THREE.Group(); o.add(g); o.userData.size=[w,h]; return o };
+  let lastLook = "", aura = null, rainbow = false;
+  function dress(){
+    const sig = JSON.stringify([LOOK, tier]);
+    if(sig===lastLook) return; lastLook = sig;
+    gear.clear(); petG.clear(); aura = null;
+    // 颜色
+    const col = LOOK.color && byId[LOOK.color];
+    rainbow = !!(col && col.c==="rainbow");
+    if(col && !rainbow){ skin.color = lin(col.c[0]); skinDark.color = lin(col.c[1]) }
+    else if(!col){ skin.color = lin(CL); skinDark.color = lin("#c4664a") }
+    // 头上：装备了帽子就戴帽子，否则按形态戴头巾 / 头盔 / 王冠
+    if(LOOK.hat && byId[LOOK.hat]){
+      const h = byId[LOOK.hat], g = voxels(h.px, U, 1.04, 0, h.j0, true);
+      g.position.set(-5*U, 1.45-.5*U, 0); gear.add(g);
+    } else if(tier>=4){
+      gear.add(box(1.32,.2,.92,"#f2c14e",0,1.5,0,.05));
+      [-.5,-.25,0,.25,.5].forEach((x,k)=>gear.add(box(.16,k%2?.22:.36,.16,"#f2c14e",x,1.66+(k%2?0:.07),0,.04)));
+      gear.add(box(.14,.14,.06,"#e5484d",0,1.5,.47,.03));
+    } else if(tier===3){
+      gear.add(box(1.34,.42,.94,"#c9d0e0",0,1.58,0,.18));
+      gear.add(box(.16,.42,.56,"#e5484d",0,1.95,-.05,.07));
+    } else if(tier>=1){
+      gear.add(box(1.56,.17,1.06,"#e5484d",0,1.3,0,.05));
+      const tail = box(.12,.42,.1,"#e5484d",.66,1.08,-.56,.04); tail.rotation.z = -.4; gear.add(tail);
+    }
+    if(tier>=3) gear.add(box(1.62,1.0,.08,"#3b5bdb",0,.85,-.56,.04));            // 披风
+    if(tier>=2){                                                                   // 剑
+      gear.add(box(.12,1.15,.07,tier>=4?"#ffe9a8":"#e8edf6",1.2,1.28,.28,.04));
+      gear.add(box(.44,.09,.14,"#f2c14e",1.2,.68,.28,.03));
+      gear.add(box(.1,.32,.1,"#7a4b2a",1.2,.48,.28,.03));
+    }
+    if(tier>=4){                                                                   // 王者光环
+      aura = new THREE.Mesh(new THREE.TorusGeometry(1.15,.05,8,48), new THREE.MeshBasicMaterial({color:"#ffd66b", transparent:true, opacity:.75}));
+      aura.rotation.x = Math.PI/2; aura.position.y = .05; gear.add(aura);
+    }
+    gear.traverse(o=>{ if(o.isMesh){ o.castShadow = true } });
+    // 宠物：跟在左边
+    if(LOOK.pet && byId[LOOK.pet]){ const p = centered(byId[LOOK.pet].px, .15, .45); p.position.set(-1.45, .15, .35); petG.add(p) }
+  }
+  // 营地装饰：拥有的都摆在营火周围
+  let lastCamp = "";
+  function dressCamp(){
+    const own = LOOT.filter(o=>o.kind==="camp" && DAILY.owned && DAILY.owned.has(o.id));
+    const sig = own.map(o=>o.id).join();
+    if(sig===lastCamp) return; lastCamp = sig;
+    campG.clear();
+    const spots = [[-1.2,.5],[1.1,-.9],[-1.3,-.9],[.1,1.25],[1.35,.55],[-.3,-1.45],[-2.1,-.1],[2.1,-.2],[.9,1.3]];
+    own.forEach((o,k)=>{ const [x,z] = spots[k%spots.length]; const g = centered(o.px,.13,.36); g.position.set(x,0,z); g.rotation.y = (k*1.3)%1-.5; campG.add(g) });
+  }
+  // 宝箱开盖：盖子绕后边缘翻开 → 方块喷出来 → 弹出奖励窗口
+  const lid = chest.children[1], lidPivot = new THREE.Vector3(0,.53,-.31), lidOff = new THREE.Vector3(0,.15,.31);
+  let chestAnim = null;
+  function stepChest(dt){
+    if(!chestAnim) return;
+    chestAnim.t += dt;
+    const a = -Math.min(1, chestAnim.t/.35)*1.25;
+    const off = lidOff.clone().applyAxisAngle(new THREE.Vector3(1,0,0), a);
+    lid.position.copy(lidPivot).add(off); lid.rotation.x = a;
+    if(!chestAnim.burst && chestAnim.t>.35){
+      chestAnim.burst = true;
+      const p = chest.getWorldPosition(new THREE.Vector3());
+      burst(p.x, p.y+.8, p.z, ["#ffd66b","#ffe9a8","#ffffff","#ff9f6b"], 26, .8);
+    }
+    if(chestAnim.t>.75){ chestAnim = null; lid.position.set(0,.68,0); lid.rotation.x = 0; openChest() }
+  }
+  function stepGear(dt, t){
+    dress(); dressCamp();
+    if(rainbow){ skin.color.setHSL((t*.15)%1,.65,.55).convertSRGBToLinear(); skinDark.color.setHSL((t*.15)%1,.6,.42).convertSRGBToLinear() }
+    if(aura){ aura.rotation.z = t*1.5; aura.material.opacity = .55+Math.sin(t*3)*.2 }
+    if(petG.children[0]){ petG.children[0].position.y = .15 + Math.abs(Math.sin(t*3))*.18; petG.children[0].rotation.y = Math.sin(t*1.2)*.3 }
   }
 
   T3.debug = ()=>({dist:camera.position.distanceTo(controls.target), target:controls.target.toArray().map(v=>+v.toFixed(2)), cam:camera.position.toArray().map(v=>+v.toFixed(2)), zooming, fight:!!fight});
