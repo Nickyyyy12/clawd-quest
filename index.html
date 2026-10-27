@@ -152,6 +152,27 @@ body:not(.toy) .loader3d{display:none}
 .mbox canvas.loot3d{width:min(300px,100%);height:230px}
 body.toy .slot canvas{width:58px;height:48px}
 .chip.gd{color:#c98a0c}
+/* 能力卡、能力册、现实奖励 */
+.acard{border:1px solid rgba(127,127,127,.25);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;margin-top:8px;background:rgba(255,255,255,.04)}
+body.toy .acard{background:#fff}
+.acard.gold{border-color:#f2c14e;box-shadow:inset 0 0 0 1px rgba(242,193,78,.4)}
+.acard.dim{opacity:.6}
+.ahead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.anum{font-size:11px;color:var(--dim)} .ahead b{font-size:15px}
+.astar{font-size:11px;color:#c98a0c;margin-left:auto}
+.acan{margin:0;font-size:14px;line-height:1.6}
+.aev{margin:0;font-size:12px;color:var(--dim)}
+.acopy{display:flex;gap:8px;align-items:center;margin-top:2px}
+.acopy span{flex:1;min-width:0;font-size:12px;color:var(--dim);background:rgba(127,127,127,.1);border-radius:8px;padding:4px 8px}
+.acopy button{font-size:12px;padding:3px 10px}
+.abook h3{margin:14px 0 0;font-size:15px} .abook h3 small{color:var(--dim);font-weight:400;margin-left:6px}
+.arew{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.4fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed rgba(127,127,127,.3)}
+.arew .rl{display:flex;flex-direction:column} .arew .rl small{font-size:11px;color:var(--dim)}
+.arew.ready .rl small{color:#2f9a58;font-weight:600} .arew.done{opacity:.6}
+.arew input{font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid rgba(127,127,127,.35);background:transparent;color:var(--ink);min-width:0}
+.arew button{font-size:12px;padding:4px 12px} .arew button:disabled{opacity:.4;cursor:default}
+button.chip.hot{color:#d0642a;font-weight:700}
+@media (max-width:600px){.arew{grid-template-columns:1fr auto}.arew input{grid-column:1/-1;grid-row:2}}
 /* 升级特效层 */
 #fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
 .toast.err{color:#ff9aa0}
@@ -230,6 +251,8 @@ details summary{cursor:pointer;color:var(--ink)}
         <span class="chip" id="mood"></span>
         <button class="chip" id="chestBtn" type="button" hidden>🎁 <b id="chestN">0</b> 个宝箱</button>
         <button class="chip" id="bagBtn" type="button">🎒 背包</button>
+        <button class="chip" id="bookBtn" type="button">📜 能力册</button>
+        <button class="chip" id="rewardBtn" type="button">🏆 奖励</button>
       </div>
       <div class="chips zones" id="zoneBtns" aria-label="快速查看区域"></div>
       <div class="toast" id="status">正在连接 Google Drive，读取学习状态卡…</div>
@@ -258,6 +281,7 @@ details summary{cursor:pointer;color:var(--ink)}
           <h2 id="bName"></h2>
           <div class="btns">
             <button id="fight" type="button">出击！</button>
+            <button class="ghost" id="cardBtn" type="button">能力卡</button>
             <button class="ghost" id="back" type="button">回地图</button>
           </div>
         </div>
@@ -282,6 +306,26 @@ details summary{cursor:pointer;color:var(--ink)}
       <div class="mhead"><h2>🎒 背包 <span id="bagCount"></span></h2><button class="ghost" id="bagClose" type="button">关闭</button></div>
       <p class="mmeta">每天学习一次就能开一个宝箱。点帽子、颜色、宠物可以装备，再点一次卸下；营地装饰会自动摆在营火旁边。</p>
       <div class="bag" id="bagGrid"></div>
+    </div>
+  </div>
+  <div class="modal" id="cardModal" hidden>
+    <div class="mbox wide">
+      <div class="mhead"><h2>📜 能力卡</h2><button class="ghost" id="cardClose" type="button">关闭</button></div>
+      <div id="cardBody"></div>
+    </div>
+  </div>
+  <div class="modal" id="bookModal" hidden>
+    <div class="mbox wide">
+      <div class="mhead"><h2>📜 能力册 <span id="bookCount"></span></h2><button class="ghost" id="bookClose" type="button">关闭</button></div>
+      <p class="mmeta">每通一关得到一张能力卡，打通一座岛合成一张阶段能力。「复制简历句」可以直接用在简历和面试里。</p>
+      <div id="bookBody"></div>
+    </div>
+  </div>
+  <div class="modal" id="rewModal" hidden>
+    <div class="mbox wide">
+      <div class="mhead"><h2>🏆 现实奖励</h2><button class="ghost" id="rewClose" type="button">关闭</button></div>
+      <p class="mmeta">奖励由你自己定：点文字就能改成你真正想要的东西。达成后点「兑换」，然后真的去兑现它。奖励清单保存在这台浏览器里。</p>
+      <div id="rewBody"></div>
     </div>
   </div>
   <canvas id="fx" hidden aria-label="升级特效，点击关闭"></canvas>
@@ -1281,6 +1325,7 @@ function render(){
   try{ localStorage.setItem("clawd-tier", tier) }catch(e){}
   updateDaily();
   renderZoneBtns();
+  updateRewardBtn();
   if(window.T3rebuild && STYLE==="toy") T3rebuild();
   document.getElementById("hpv").textContent = hp+"/100";
   const bar = document.getElementById("hpi"); bar.style.width = hp+"%"; bar.className = hp>=60?"ok":"";
@@ -1384,6 +1429,157 @@ document.getElementById("formNext").addEventListener("click",()=>{
   levelUp(Math.max(0, t>0 ? FORMS[t].min-1 : c-1), c);
 });
 
+// ---------- 能力卡：每通一关，写清楚「你现在能做什么」 ----------
+const CAN = {
+  "JDK 与第一个程序":"能安装 JDK、在 IDEA 里新建项目并运行第一个 Java 程序",
+  "变量与数据类型":"能为不同的数据选合适的类型（int、double、boolean、String）并正确声明变量",
+  "类型转换":"能判断什么时候自动转换、什么时候要强制转换，并避免精度丢失",
+  "运算符":"能用算术、比较、逻辑运算符写出正确的计算和条件",
+  "输入输出 Scanner":"能用 Scanner 读取用户输入，做一个会回应的小程序",
+  "if 分支":"能用 if / else if / else 写出分档判断，比如成绩等级",
+  "switch":"能用 switch 处理多个固定选项，比如菜单",
+  "for 循环":"能用 for 循环重复执行固定次数的任务",
+  "while / do-while":"能写出「直到满足条件才停」的循环，比如猜数字游戏",
+  "break 与 continue":"能在循环中提前退出，或跳过某一轮",
+  "嵌套循环":"能用双层循环处理两两组合、表格类问题",
+  "一维数组":"能创建数组、遍历求和、找最大值",
+  "二维数组":"能用二维数组表示表格或棋盘",
+  "方法参数与返回值":"能把重复代码抽成方法，传参并接住返回值（包括返回数组）",
+  "方法重载":"能写出同名、不同参数的方法",
+  "类与对象":"能根据需求设计一个类，创建对象并调用它的方法",
+  "构造器与 this":"能用构造器初始化对象，并用 this 区分成员变量和参数",
+  "封装":"能用 private 加 getter / setter 保护对象的数据",
+  "static":"能区分属于类的 static 成员和属于对象的成员",
+  "继承":"能用 extends 抽出公共父类，减少重复代码",
+  "重写与 super":"能重写父类方法，并用 super 调用父类构造器",
+  "多态":"能用父类或接口类型接收不同的子类对象，写出可替换的代码",
+  "final 与单例":"能用 final 定义常量，并写出单例类",
+  "枚举":"能用 enum 表示固定的几种状态",
+  "抽象类":"能用抽象类定义模板，让子类补全细节",
+  "接口":"能定义接口，并写出多个可替换的实现（比如多种支付方式）",
+  "try-catch-finally":"能捕获异常，让程序出错时不崩溃",
+  "智能家居综合项目":"能把类、继承、数组和用户输入组合成一个可交互的控制台小项目",
+  "代码块":"能说清静态代码块、实例代码块和构造器的执行顺序",
+  "成员与静态内部类":"能在合适的场景使用成员内部类和静态内部类",
+  "匿名内部类":"能在调用的地方直接写出接口的一次性实现",
+  "Lambda":"能把只有一个方法的接口实现缩写成 Lambda 表达式",
+  "方法引用":"能把只调用现成方法的 Lambda 改写成「类名::方法」或「对象::方法」",
+  "String 基础":"能用 equals 正确比较字符串，并使用常用的 String 方法",
+  "String 输入校验":"能用 trim、indexOf、substring、startsWith 校验邮箱和手机号",
+  "ArrayList 增删查":"能用 ArrayList 存放、添加、删除、查找数据",
+  "ArrayList 存取对象":"能把对象放进列表，再取出来调用它的方法",
+  "ArrayList 复习小测":"能熟练地用 ArrayList 管理一组对象",
+  "算法：数组＋循环 第 1 题":"能独立读题、手算例子，再用数组和循环解出一道力扣题",
+  "算法：数组＋循环 第 2 题":"能独立解出第二道数组加循环的力扣题",
+  "Git 独立提交":"能不看提示，用 add、commit、push 把代码提交到 GitHub",
+  "异常体系":"能区分编译时异常和运行时异常，并写出自定义异常",
+  "泛型":"能写出带泛型的类和方法，让编译器帮忙检查类型",
+  "包装类":"能在基本类型和包装类之间正确转换",
+  "Collection 与 List":"能用 List 的各种遍历方式处理一组数据",
+  "LinkedList 原理":"能说清 ArrayList 和 LinkedList 的区别和适用场景",
+  "Set 去重":"能用 Set 去重，并说清 equals 和 hashCode 的关系",
+  "Map 键值对":"能用 Map 按编号快速找到对象",
+  "Stream 流":"能用 Stream 对集合做过滤、转换和统计",
+  "File 与递归":"能用 File 遍历文件夹，用递归处理多层目录",
+  "IO 流":"能把数据保存到文件，再读回来",
+  "线程与线程安全":"能创建线程，并复现、修复多线程共享数据出错的问题",
+  "锁与线程池":"能用锁和线程池安全地并发执行任务",
+  "网络 TCP/UDP":"能写出一个简单的客户端和服务端通信程序",
+  "单元测试":"能用 JUnit 给业务方法写测试",
+  "反射与注解":"能说清框架为什么需要反射，并写一个自定义注解",
+  "动态代理":"能用动态代理，在不改原代码的情况下给方法加功能"
+};
+const ISLAND_CAN = [
+  "Java 基础语法：能写出带输入、判断、循环、数组和方法的完整小程序",
+  "面向对象：能用类、继承、多态和接口设计一个可扩展的小系统",
+  "高级语法和实战：能用内部类、Lambda、字符串和集合写实用工具，独立提交代码、解算法题",
+  "Java 进阶：能处理异常、集合、文件、并发和网络，为 Spring Boot 后端打好底子"
+];
+const canOf = s => CAN[s.name] || `能讲清楚并独立写出「${s.name}」的练习`;
+// 从老师写的证据里，挑出练习里写过的类名和方法名
+function evidenceOf(s){
+  const ev = s.ev || "";
+  const names = [...new Set((ev.match(/\b[A-Z][A-Za-z]{2,}(?:::[a-zA-Z]+)?\b/g)||[]).filter(w=>!/^(Level|Main|Java|IDEA|SE|BE|String|Lambda|Hot)$/.test(w)))].slice(0,6);
+  const date = (ev.match(/\d{4}-\d{2}-\d{2}/)||[])[0] || "";
+  const hints = s.hints||0;
+  return {names, date, hints};
+}
+function zoneDone(d, z){ return d.stages.some(s=>s.zone===z) && d.stages.filter(s=>s.zone===z).every(s=>s.status==="cleared") }
+function copyText(btn, text){
+  const ok = ()=>{ const t = btn.textContent; btn.textContent = "已复制"; setTimeout(()=>btn.textContent = t, 1400) };
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(ok).catch(()=>{ const r = document.createRange(); r.selectNodeContents(btn.previousElementSibling); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r) });
+}
+function cardHTML(s, i){
+  const e = evidenceOf(s), cleared = s.status==="cleared";
+  const resume = `掌握 ${s.name}：${canOf(s)}`;
+  return `<div class="acard${s.gold?" gold":""}${cleared?"":" dim"}">
+    <div class="ahead"><span class="anum">第 ${i+1} 关</span><b>${esc(s.name)}</b>${s.gold?'<span class="astar">⭐ 金星</span>':""}</div>
+    <p class="acan">${cleared ? "你现在能" : "通关后你将能"}：${esc(canOf(s).replace(/^能/,""))}</p>
+    ${e.names.length ? `<p class="aev">练习里写过：${e.names.map(esc).join("、")}</p>` : ""}
+    ${cleared && (e.date||e.hints) ? `<p class="aev">${e.date?`首次验收 ${e.date}`:""}${e.date&&e.hints?" · ":""}${e.hints?`过程中需要提示 ${e.hints} 次`:""}</p>` : ""}
+    ${cleared ? `<div class="acopy"><span>${esc(resume)}</span><button class="ghost" type="button">复制简历句</button></div>` : ""}
+  </div>`;
+}
+function showCard(s){
+  const i = data.stages.indexOf(s);
+  document.getElementById("cardBody").innerHTML = cardHTML(s, i);
+  bindCopy(document.getElementById("cardBody"));
+  document.getElementById("cardModal").hidden = false;
+}
+function bindCopy(root){ root.querySelectorAll(".acopy button").forEach(b=>b.onclick = ()=>copyText(b, b.previousElementSibling.textContent)) }
+function showBook(){
+  const box = document.getElementById("bookBody"); box.innerHTML = "";
+  const zones = [...new Set(data.stages.map(s=>s.zone))];
+  let total = 0;
+  zones.forEach(z=>{
+    const st = data.stages.map((s,i)=>[s,i]).filter(([s])=>s.zone===z && s.status==="cleared");
+    total += st.length;
+    const all = data.stages.filter(s=>s.zone===z).length, done = zoneDone(data, z);
+    const sec = document.createElement("section"); sec.className = "abook";
+    sec.innerHTML = `<h3>${esc(ZONES[z].name)} <small>${st.length} / ${all}</small></h3>`
+      + (done ? `<div class="acard gold"><div class="ahead"><b>阶段能力</b><span class="astar">已打通</span></div><p class="acan">${esc(ISLAND_CAN[z])}</p><div class="acopy"><span>${esc(ISLAND_CAN[z])}</span><button class="ghost" type="button">复制简历句</button></div></div>` : `<p class="aev">打通这座岛后合成阶段能力：${esc(ISLAND_CAN[z])}</p>`)
+      + (st.length ? st.map(([s,i])=>cardHTML(s,i)).join("") : `<p class="aev">这里还没有通关的关卡。</p>`);
+    box.append(sec);
+  });
+  document.getElementById("bookCount").textContent = `${total} 张`;
+  bindCopy(box);
+  document.getElementById("bookModal").hidden = false;
+}
+
+// ---------- 现实奖励：你自己定，达成后兑换 ----------
+const REWARDS = [
+  {id:"z1",  label:"打通秋枫山谷（面向对象）", ok:()=>zoneDone(data,1), def:"一杯喜欢的奶茶"},
+  {id:"s7",  label:"连续学习 7 天",            ok:()=>DAILY.best>=7,    def:"周末睡个懒觉"},
+  {id:"g5",  label:"拿到 5 颗金星",            ok:()=>GOLD>=5,          def:"看一部想看的电影"},
+  {id:"z2",  label:"打通雪原高地（SE-08 + 算法 + Git）", ok:()=>zoneDone(data,2), def:"买一样想要的小东西（100 元内）"},
+  {id:"g10", label:"拿到 10 颗金星",           ok:()=>GOLD>=10,         def:"一个周末下午随便玩游戏"},
+  {id:"z3",  label:"打通熔岩王城（Java 进阶）", ok:()=>zoneDone(data,3), def:"出去吃一顿好的"},
+  {id:"all", label:"全部关卡通关",             ok:()=>data.stages.every(s=>s.status==="cleared"), def:"一件想要很久的大奖励"}
+];
+let REW = {};
+try{ REW = JSON.parse(localStorage.getItem("clawd-rewards")||"{}") }catch(e){}
+const saveRew = ()=>{ try{ localStorage.setItem("clawd-rewards", JSON.stringify(REW)) }catch(e){} };
+function rewardsReady(){ return data ? REWARDS.filter(r=>r.ok() && !(REW[r.id]&&REW[r.id].done)).length : 0 }
+function updateRewardBtn(){
+  const n = rewardsReady(), b = document.getElementById("rewardBtn");
+  if(b){ b.textContent = n ? `🏆 奖励（${n} 个可兑换）` : "🏆 奖励"; b.classList.toggle("hot", n>0) }
+}
+function showRewards(){
+  const box = document.getElementById("rewBody"); box.innerHTML = "";
+  REWARDS.forEach(r=>{
+    const st = REW[r.id] || {}, ok = r.ok();
+    const row = document.createElement("div"); row.className = "arew" + (st.done ? " done" : ok ? " ready" : "");
+    row.innerHTML = `<div class="rl"><b>${esc(r.label)}</b><small>${st.done ? `已兑换 ${st.done}` : ok ? "已达成，可以兑换！" : "还没达成"}</small></div>
+      <input id="rew-${r.id}" type="text" value="${esc(st.text || r.def)}" aria-label="${esc(r.label)} 的奖励">
+      <button type="button" ${ok && !st.done ? "" : "disabled"}>${st.done ? "已兑换" : "兑换"}</button>`;
+    const inp = row.querySelector("input"), btn = row.querySelector("button");
+    inp.onchange = ()=>{ REW[r.id] = Object.assign({}, REW[r.id], {text:inp.value.trim()||r.def}); saveRew() };
+    btn.onclick = ()=>{ REW[r.id] = {text:inp.value.trim()||r.def, done:new Date().toLocaleDateString("sv-SE")}; saveRew(); showRewards(); updateRewardBtn() };
+    box.append(row);
+  });
+  document.getElementById("rewModal").hidden = false;
+}
+
 // ---------- 区域按钮：快速回看别的区域 ----------
 const ZONE_ICON = ["🌱","🍁","❄","🌋"], ZONE_SHORT = ["草原","山谷","雪原","王城"];
 function renderZoneBtns(){
@@ -1466,6 +1662,10 @@ document.getElementById("chestBtn").addEventListener("click",openChest);
 document.getElementById("lootClose").addEventListener("click",()=>{ document.getElementById("loot").hidden=true; updateDaily() });
 document.getElementById("bagBtn").addEventListener("click",()=>{ renderBag(); document.getElementById("bag").hidden=false });
 document.getElementById("bagClose").addEventListener("click",()=>{ document.getElementById("bag").hidden=true });
+document.getElementById("bookBtn").addEventListener("click",()=>{ if(data) showBook() });
+document.getElementById("rewardBtn").addEventListener("click",()=>{ if(data) showRewards() });
+document.getElementById("cardBtn").addEventListener("click",()=>{ if(cur) showCard(cur) });
+["card","book","rew"].forEach(k=>document.getElementById(k+"Close").addEventListener("click",()=>{ document.getElementById(k+"Modal").hidden = true }));
 document.getElementById("styleBtn").addEventListener("click",toggleStyle);
 document.getElementById("homeBtn").addEventListener("click",()=>{
   if(!data) return;
