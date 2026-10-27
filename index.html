@@ -151,6 +151,7 @@ body:not(.toy) .loader3d{display:none}
 /* 3D 宝箱舞台 */
 .mbox canvas.loot3d{width:min(300px,100%);height:230px}
 body.toy .slot canvas{width:58px;height:48px}
+.chip.gd{color:#c98a0c}
 /* 升级特效层 */
 #fx{position:fixed;inset:0;width:100%;height:100%;z-index:50;cursor:pointer}
 .toast.err{color:#ff9aa0}
@@ -221,6 +222,7 @@ details summary{cursor:pointer;color:var(--ink)}
       <div class="chips">
         <span class="chip g">✔ <b id="sCleared">-</b> 已通</span>
         <span class="chip y">? <b id="sShaky">-</b> 待复测</span>
+        <span class="chip gd" title="Level 4：延时换场景复测通过的关卡">⭐ <b id="sGold">0</b> 金星</span>
         <button class="chip" id="formNext" type="button" title="回放升级特效"></button>
       </div>
       <div class="chips daily">
@@ -357,9 +359,22 @@ const CURRICULUM = [
 
 // 形态：通关数达到 min 就进化
 const FORMS = [
-  {min:0, name:"见习"},{min:3, name:"战士"},{min:6, name:"剑士"},{min:10, name:"骑士"},{min:15, name:"王者"}
+  {min:0, name:"见习"},{min:3, name:"战士"},{min:6, name:"剑士"},{min:10, name:"骑士"},{min:15, name:"王者"},
+  // 王者之后：按课程阶段进化，打通一整座岛才升
+  {min:999, name:"星辉", zone:1, need:"秋枫山谷"}, {min:999, name:"晶铠", zone:2, need:"雪原高地"},
+  {min:999, name:"炎王", zone:3, need:"熔岩王城"}, {min:999, name:"Java 大师", all:true, need:"全部关卡"}
 ];
 const tierOf = n => FORMS.reduce((t,f,i)=>n>=f.min?i:t,0);
+var GOLD = 0;   // Level 4（延时复测通过）的关卡数
+function tierOfData(d){
+  let t = tierOf(d.stages.filter(s=>s.status==="cleared").length);
+  const done = z => d.stages.some(s=>s.zone===z) && d.stages.filter(s=>s.zone===z).every(s=>s.status==="cleared");
+  if(t>=4 && done(1)) t = 5;
+  if(t>=5 && done(2)) t = 6;
+  if(t>=6 && done(3)) t = 7;
+  if(t>=7 && d.stages.every(s=>s.status==="cleared")) t = 8;
+  return t;
+}
 
 // ---------- 读学习卡 ----------
 function parseCard(text){
@@ -372,10 +387,10 @@ function parseCard(text){
     const lv = p[2]||"";
     const ev = p.slice(3).join("｜").replace(/^证据：/,"");
     card.push({ key:p[1], lv:lv.replace(/^状态：/,""), ev, used:false,
-      status: /Level\s*[345]/.test(lv) ? "cleared" : "shaky" });
+      status: /Level\s*[345]/.test(lv) ? "cleared" : "shaky", gold: /Level\s*[45]/.test(lv) });
   }
   const pack = (c, name, mod, zone, extra={}) => ({
-    name, full:`${name}（${mod}）`, mod, zone, lv:c?c.lv:"未开打", ev:c?c.ev:"", status:c?c.status:"todo",
+    name, full:`${name}（${mod}）`, mod, zone, lv:c?c.lv:"未开打", ev:c?c.ev:"", status:c?c.status:"todo", gold:c?!!c.gold:false,
     hints:c?(c.ev.match(/经(一次|两次)?提示|经指出|经纠正/g)||[]).length:0,
     wins:c?(c.ev.match(/独立|全对|一次写对|与预期一致/g)||[]).length:0, ...extra });
   // 2) 按课程地图排关卡，每关去学习卡里找对应的行
@@ -1257,7 +1272,13 @@ document.getElementById("fight").addEventListener("click",()=>{
 function render(){
   const {hp,douN} = computeHp(data);
   const cleared = data.stages.filter(s=>s.status==="cleared").length;
-  tier = tierOf(cleared);
+  tier = tierOfData(data);
+  GOLD = data.stages.filter(s=>s.gold).length;
+  document.getElementById("sGold").textContent = GOLD;
+  // 按岛进化时也播进化动画（上次打开时记下的形态比现在低）
+  let lastTier = null; try{ const v = localStorage.getItem("clawd-tier"); lastTier = v===null ? null : +v }catch(e){}
+  if(lastTier!==null && tier>lastTier && tier>=5 && STYLE==="toy" && window.T3 && T3.levelUp){ const a = lastTier, b = tier; setTimeout(()=>T3.levelUp(cleared, cleared, true, [FORMS[a].name, FORMS[b].name]), 1200) }
+  try{ localStorage.setItem("clawd-tier", tier) }catch(e){}
   updateDaily();
   renderZoneBtns();
   if(window.T3rebuild && STYLE==="toy") T3rebuild();
@@ -1269,7 +1290,13 @@ function render(){
   document.getElementById("lvl").textContent = cleared;
   drawFace();
   const next = FORMS[tier+1];
-  document.getElementById("formNext").textContent = next ? `★ 再过 ${next.min-cleared} 关进化成「${next.name}」` : "★ 已是最强形态";
+  let nextTxt = "★ 已是最强形态";
+  if(next && next.min < 999) nextTxt = `★ 再过 ${next.min-cleared} 关进化成「${next.name}」`;
+  else if(next){
+    const left = next.all ? data.stages.filter(x=>x.status!=="cleared").length : data.stages.filter(x=>x.zone===next.zone && x.status!=="cleared").length;
+    nextTxt = `★ 打通「${next.need}」还差 ${left} 关，进化成「${next.name}」`;
+  }
+  document.getElementById("formNext").textContent = nextTxt;
   document.getElementById("hpLog").innerHTML = `<li>起始血量 <b>100</b></li>`
     + data.dou.map(d=>`<li class="dmg">抖点·${esc(d.topic)}：${d.n} 个，<b>−${d.n*5}</b></li>`).join("")
     + `<li class="hl">闭卷复习完成 ${data.reviews} 次：<b>+${data.reviews*10}</b></li>`
@@ -1860,7 +1887,7 @@ const T3 = { ok:false };
       const hidden = i > reveal && shroud.some(c=>c.first<=i);
       if(hidden) return;
       const ghost = i > reveal;
-      const t = box(1.9, p.h, 1.9, ghost ? "#efe9e1" : COL[s.status], p.x, p.base+p.h/2, p.z, .22, ghost?{transparent:true,opacity:.55}:{});
+      const t = box(1.9, p.h, 1.9, ghost ? "#efe9e1" : (s.gold ? "#ffd66b" : COL[s.status]), p.x, p.base+p.h/2, p.z, .22, ghost?{transparent:true,opacity:.55}:{});
       t.userData.level = i; tiles.push(t); world.add(t); tileTop[i] = p.y;
       if(i===today){ const ring=new THREE.Mesh(new THREE.TorusGeometry(1.45,.07,8,40),mat("#ffcf5a",{emissive:new THREE.Color("#ffcf5a").convertSRGBToLinear(),emissiveIntensity:.6})); ring.rotation.x=Math.PI/2; ring.position.set(p.x,p.y+.05,p.z); ring.userData.pulse=true; world.add(ring) }
       const c=document.createElement("canvas"); c.width=c.height=128; const g=c.getContext("2d");
@@ -1868,7 +1895,8 @@ const T3 = { ok:false };
       const num=new THREE.Mesh(new THREE.PlaneGeometry(1.05,1.05),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c),transparent:true}));
       num.rotation.x=-Math.PI/2; num.position.set(p.x,p.y+.012,p.z); world.add(num);
       if(!ghost){ const sp=textSprite(s.name,{fg: s.status==="todo" ? "#a89e94" : "#3a3330"}); sp.position.set(p.x,p.y+1.85,p.z); world.add(sp) }
-      if(s.status==="cleared"){ const g2=box(.32,.32,.32,"#ffd66b",p.x+.55,p.y+.25,p.z-.55,.08); g2.rotation.set(.6,.6,0); g2.userData.spin=true; world.add(g2) }
+      if(s.status==="cleared" && s.gold){ const gem=new THREE.Mesh(new THREE.OctahedronGeometry(.42), mat("#ffd66b",{emissive:new THREE.Color("#ffb020").convertSRGBToLinear(), emissiveIntensity:.55, roughness:.35})); gem.position.set(p.x,p.y+.75,p.z); gem.castShadow=true; gem.userData.spin=true; world.add(gem) }
+      else if(s.status==="cleared"){ const g2=box(.32,.32,.32,"#ffd66b",p.x+.55,p.y+.25,p.z-.55,.08); g2.rotation.set(.6,.6,0); g2.userData.spin=true; world.add(g2) }
     });
     // 石板路和木桥
     for(let i=0;i<n-1;i++){
@@ -2132,7 +2160,7 @@ const T3 = { ok:false };
   // ---------- 3D 升级特效 ----------
   const lvlEl = document.getElementById("lvl3d");
   let celebrate = null;
-  function levelUp3D(from, to, evolve){
+  function levelUp3D(from, to, evolve, names){
     const p = clawd.position;
     const ring = new THREE.Mesh(new THREE.TorusGeometry(1,.08,8,48), new THREE.MeshBasicMaterial({color:"#ffd66b", transparent:true}));
     ring.rotation.x = Math.PI/2; ring.position.set(p.x, p.y+.1, p.z); scene.add(ring);
@@ -2142,7 +2170,7 @@ const T3 = { ok:false };
     camTarget.copy(p); zooming = {t:0, from:camera.position.distanceTo(controls.target), to:9};
     setTimeout(()=>burst(p.x,p.y+1,p.z,["#ffd66b","#ff9f6b","#8fcf9a","#9cc6ef","#ffffff","#d77a5c"], evolve?110:70, 1.3), evolve?1300:350);
     document.getElementById("lvl3dTitle").textContent = evolve ? "EVOLUTION!" : "LEVEL UP!";
-    document.getElementById("lvl3dSub").textContent = evolve ? `${FORMS[tierOf(from)].name} → ${FORMS[tierOf(to)].name}` : `Lv.${from} → Lv.${to}`;
+    document.getElementById("lvl3dSub").textContent = evolve ? (names ? `${names[0]} → ${names[1]}` : `${FORMS[tierOf(from)].name} → ${FORMS[tierOf(to)].name}`) : `Lv.${from} → Lv.${to}`;
     lvlEl.classList.remove("show"); void lvlEl.offsetWidth; lvlEl.hidden = false; lvlEl.classList.add("show");
     clearTimeout(levelUp3D.timer); levelUp3D.timer = setTimeout(()=>{ lvlEl.hidden = true; T3.unzoom() }, evolve?4200:3200);
   }
@@ -2200,16 +2228,17 @@ const T3 = { ok:false };
     return g;
   }
   const centered = (rows,u,depth)=>{ const g=voxels(rows,u,depth), w=Math.max(...rows.map(r=>r.length))*u, h=rows.length*u; g.position.set(-w/2+u/2, h-u/2, 0); const o=new THREE.Group(); o.add(g); o.userData.size=[w,h]; return o };
-  let lastLook = "", aura = null, rainbow = false;
+  let lastLook = "", aura = null, rainbow = false, orbits = [];
   function dress(){
-    const sig = JSON.stringify([LOOK, tier, !!DAILY.fainted]);
+    const sig = JSON.stringify([LOOK, tier, !!DAILY.fainted, Math.floor(GOLD/5)]);
     if(sig===lastLook) return; lastLook = sig;
-    gear.clear(); petG.clear(); aura = null;
+    gear.clear(); petG.clear(); aura = null; orbits = [];
     // 颜色
     const col = LOOK.color && byId[LOOK.color];
     rainbow = !!(col && col.c==="rainbow");
     if(col && !rainbow){ skin.color = lin(col.c[0]); skinDark.color = lin(col.c[1]) }
     else if(!col){ skin.color = lin(CL); skinDark.color = lin("#c4664a") }
+    if(tier>=8 && !LOOK.color){ skin.color = lin("#f2c14e"); skinDark.color = lin("#c99a2e") }   // Java 大师：全身金色
     if(DAILY.fainted){ skin.color = lin("#aaa6a2"); skinDark.color = lin("#8f8b87") }      // 晕倒时变灰
     // 头上：装备了帽子就戴帽子，否则按形态戴头巾 / 头盔 / 王冠
     if(LOOK.hat && byId[LOOK.hat]){
@@ -2235,6 +2264,28 @@ const T3 = { ok:false };
     if(tier>=4){                                                                   // 王者光环
       aura = new THREE.Mesh(new THREE.TorusGeometry(1.15,.05,8,48), new THREE.MeshBasicMaterial({color:"#ffd66b", transparent:true, opacity:.75}));
       aura.rotation.x = Math.PI/2; aura.position.y = .05; gear.add(aura);
+    }
+    if(tier>=5){                                                                   // 星辉：一圈星星绕着转
+      const orb = new THREE.Group(); orb.userData.orbit = 1;
+      for(let i=0;i<8;i++){ const st = new THREE.Mesh(new THREE.OctahedronGeometry(.11), mat("#fff1a8",{emissive:lin("#ffd66b"), emissiveIntensity:.8})); const a = i/8*Math.PI*2; st.position.set(Math.cos(a)*1.3, 1.0+(i%2)*.15, Math.sin(a)*1.3); orb.add(st) }
+      gear.add(orb); orbits.push(orb);
+    }
+    if(tier>=6){                                                                   // 晶铠：冰晶护甲和肩上的冰锥
+      gear.add(box(1.58,.42,1.08,"#bfe6f5",0,.62,0,.12,{transparent:true, opacity:.55}));
+      [-.9,.9].forEach(x=>{ const c = new THREE.Mesh(new THREE.ConeGeometry(.16,.5,6), mat("#d8f1fb",{transparent:true, opacity:.9, emissive:lin("#7cc3e3"), emissiveIntensity:.4})); c.position.set(x,1.32,0); gear.add(c) });
+    }
+    if(tier>=7){                                                                   // 炎王：火焰披风和绕身的熔岩块
+      gear.add(box(1.66,1.05,.06,"#e0552a",0,.85,-.6,.03));
+      const lava = new THREE.Group(); lava.userData.orbit = -1.3;
+      for(let i=0;i<4;i++){ const m = new THREE.Mesh(rbox(.2,.2,.2,.05), mat("#ff7a2e",{emissive:lin("#ff6a1e"), emissiveIntensity:.9})); const a = i/4*Math.PI*2; m.position.set(Math.cos(a)*1.05, 1.95+(i%2)*.22, Math.sin(a)*1.05); lava.add(m) }
+      gear.add(lava); orbits.push(lava);
+    }
+    if(tier>=8 && !LOOK.hat){                                                      // Java 大师：王冠上的咖啡杯
+      gear.add(box(.62,.5,.62,"#ffffff",0,1.98,0,.08), box(.52,.06,.52,"#6b4226",0,2.24,0,.03), box(.12,.3,.1,"#ffffff",.4,1.98,0,.04));
+    }
+    for(let i=0;i<Math.min(4, Math.floor(GOLD/5));i++){                            // 每 5 颗金星，脚下多一圈金边
+      const r = new THREE.Mesh(new THREE.TorusGeometry(1.34+i*.17,.035,6,48), new THREE.MeshBasicMaterial({color:"#f2c14e", transparent:true, opacity:.85}));
+      r.rotation.x = Math.PI/2; r.position.y = .04+i*.02; gear.add(r);
     }
     gear.traverse(o=>{ if(o.isMesh){ o.castShadow = true } });
     // 宠物：跟在左边
@@ -2269,6 +2320,7 @@ const T3 = { ok:false };
   function stepGear(dt, t){
     dress(); dressCamp();
     if(rainbow){ skin.color.setHSL((t*.15)%1,.65,.55).convertSRGBToLinear(); skinDark.color.setHSL((t*.15)%1,.6,.42).convertSRGBToLinear() }
+    orbits.forEach(o=>o.rotation.y = t*o.userData.orbit*.8);
     if(aura){ aura.rotation.z = t*1.5; aura.material.opacity = .55+Math.sin(t*3)*.2 }
     if(petG.children[0]){ petG.children[0].position.y = .15 + Math.abs(Math.sin(t*3))*.18; petG.children[0].rotation.y = Math.sin(t*1.2)*.3 }
   }
